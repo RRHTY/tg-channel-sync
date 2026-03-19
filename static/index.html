@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>杏铃同步台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { background-color: #f3f4f6; }
+        .card { background-color: white; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 1.5rem; margin-bottom: 1.5rem; }
+        .log-container::-webkit-scrollbar { width: 6px; }
+        .log-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body class="text-gray-800 p-8 font-sans">
+<div id="app" class="max-w-6xl mx-auto">
+    <div class="flex justify-between items-center mb-8 border-b border-gray-200 pb-4">
+        <div class="flex items-center gap-4">
+            <h1 class="text-2xl font-bold text-gray-900">杏铃同步台</h1>
+
+            <div class="flex gap-2">
+                <a v-if="appInfo.bot.username" :href="'https://t.me/' + appInfo.bot.username" target="_blank" class="text-sm font-normal text-blue-600 hover:text-blue-800 hover:underline flex items-center bg-blue-50 px-2 py-1 rounded transition">
+                    🤖 {{ appInfo.bot.name }} (@{{ appInfo.bot.username }})
+                </a>
+                <span v-if="appInfo.user.name" class="text-sm font-normal text-purple-600 flex items-center bg-purple-50 px-2 py-1 rounded">
+                    👤 {{ appInfo.user.name }}
+                </span>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <div v-if="message" class="bg-green-100 text-green-800 px-4 py-1.5 rounded shadow-sm text-sm">{{ message }}</div>
+            <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="text-gray-500 hover:text-gray-900 flex items-center gap-1.5 transition">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path></svg>
+                <span class="text-sm font-medium">GitHub</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div>
+            <div class="card">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">添加实时同步规则</h2>
+                <div class="space-y-3">
+                    <input v-model="newMap.source_id" type="text" placeholder="源频道 ID (例如: -100123...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
+                    <input v-model="newMap.target_id" type="text" placeholder="目标频道 ID (例如: -100987...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
+                    <button @click="addMapping" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">保存规则</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">当前生效的规则</h2>
+                <ul class="space-y-2 text-sm">
+                    <li v-for="map in mappings" :key="map.source_id" class="flex justify-between items-center p-2 bg-gray-50 rounded group">
+                        <div class="flex-1 flex justify-between px-2">
+                            <span class="font-mono text-gray-500">{{ map.source_id }}</span>
+                            <span class="text-gray-400">→</span>
+                            <span class="font-mono text-gray-800">{{ map.target_id }}</span>
+                        </div>
+                        <button @click="deleteMapping(map.source_id)" class="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition px-2">删除</button>
+                    </li>
+                    <li v-if="mappings.length === 0" class="text-gray-400 text-center py-2">暂无规则</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card bg-blue-50/50">
+            <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-blue-200">历史数据全能同步</h2>
+
+            <div v-if="syncStatus.is_syncing" class="mb-6 p-4 bg-white border border-blue-100 rounded shadow-sm">
+                <div class="flex justify-between text-sm mb-1">
+                    <span class="font-medium text-blue-700">正在运行: {{ syncStatus.mode }}</span>
+                    <span class="text-gray-500">{{ syncStatus.current }} / {{ syncStatus.total }}</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
+                    <div class="bg-blue-600 h-2 rounded-full transition-all duration-500" :style="{ width: (syncStatus.total > 0 ? syncStatus.current / syncStatus.total * 100 : 0) + '%' }"></div>
+                </div>
+                <div class="text-xs text-gray-500 space-y-1">
+                    <p>📢 <b>跳过已发 (断点续传):</b> {{ syncStatus.skipped }} 条</p>
+                    <p>🔗 <b>当前操作:</b> <a :href="'https://' + syncStatus.current_link" target="_blank" class="text-blue-500 underline">{{ syncStatus.current_link }}</a></p>
+                    <p class="truncate">💬 <b>状态:</b> {{ syncStatus.current_text }}</p>
+                </div>
+            </div>
+
+            <div class="space-y-4" :class="{'opacity-50 pointer-events-none': (syncStatus.is_syncing || isStopping)}">
+                <div class="flex gap-2">
+                    <input v-model="syncForm.source_id" type="text" placeholder="对应源频道 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                    <input v-model="syncForm.target_id" type="text" placeholder="对应目标频道 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                </div>
+
+                <div class="flex bg-white rounded-lg border border-gray-200 p-1">
+                    <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">① API 拉取</button>
+                    <button @click="syncForm.mode = 'json'" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">② JSON 导入</button>
+                    <button @click="syncForm.mode = 'blind'" :class="syncForm.mode === 'blind' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">③ ID 盲猜</button>
+                </div>
+
+                <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
+                    <p class="font-bold mb-1">💡 模式说明：</p>
+                    <p>此模式需要您在电脑端 Telegram 导出频道数据（JSON 格式），并将包含媒体文件夹的目录路径填入下方。机器人将读取本地文件进行上传同步，稳定性最高。</p>
+                </div>
+                <div v-if="syncForm.mode === 'blind'" class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-3 text-xs rounded shadow-sm">
+                    <p class="font-bold mb-1">⚠️ 风险警告：</p>
+                    <p><b>原理：</b>按消息 ID 顺序尝试复制。<b>风险：</b>会产生大量无效请求，频繁操作可能导致您的 API 被官方封禁。<b>注意：</b>停止任务时后台需要约 5 秒处理当前状态，请勿频繁启停。</p>
+                </div>
+
+                <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">本地 JSON 文件绝对路径</label>
+                    <input v-model="syncForm.json_path" type="text" placeholder="例如: D:\TG_Export\result.json" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
+                </div>
+
+                <div v-if="syncForm.mode === 'api' || syncForm.mode === 'blind'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span v-if="syncForm.mode==='api'" class="text-gray-400">(可选)</span><span v-else class="text-red-400">(必填)</span></label>
+                    <div class="flex gap-2">
+                        <input v-model="syncForm.start_id" type="number" placeholder="起始 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                        <input v-model="syncForm.end_id" type="number" placeholder="结束 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">单条处理延时 (秒): </label>
+                    <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition shadow">🚀 启动 {{ syncForm.mode.toUpperCase() }} 同步任务</button>
+                <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition shadow">⏹ 停止 / 暂停当前任务</button>
+
+                <div v-if="isStopping" class="w-full bg-orange-50 border border-orange-200 rounded p-3 text-center shadow-inner">
+                    <p class="text-sm text-orange-600 font-semibold mb-2">正在安全退出并保存断点，请稍候...</p>
+                    <div class="w-full bg-orange-200 rounded-full h-2">
+                        <div class="bg-orange-500 h-2 rounded-full transition-all duration-100 ease-linear" :style="{ width: stopProgress + '%' }"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-2">
+        <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
+            <h2 class="text-sm font-semibold text-gray-600">系统运行日志 (实时监听)</h2>
+            <span class="text-xs text-gray-400">日志缓存在浏览器中，刷新页面即重置</span>
+        </div>
+        <div class="bg-slate-900 p-3 rounded h-64 overflow-y-auto log-container text-xs font-mono space-y-1">
+            <div v-for="(log, index) in sessionLogs" :key="index" class="border-b border-slate-800 pb-1"
+                 :class="{ 'text-red-400': log.level === 'ERROR', 'text-yellow-400': log.level === 'WARNING', 'text-green-400': log.level === 'SUCCESS', 'text-gray-300': log.level === 'INFO' }">
+                <span class="text-slate-500">[{{ log.time }}]</span> [{{ log.level }}] {{ log.msg }}
+            </div>
+            <div v-if="sessionLogs.length === 0" class="text-slate-500 text-center mt-12">暂无新日志...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp } = Vue;
+    createApp({
+        data() {
+            return {
+                appInfo: { bot: {name: '', username: ''}, user: {name: ''} },
+                mappings: [], newMap: { source_id: '', target_id: '' },
+                syncForm: { mode: 'api', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
+                syncStatus: { is_syncing: false, mode: '', total: 0, current: 0, current_text: '', current_link: '', skipped: 0 },
+                message: '', pollingInterval: null,
+                isFirstLogFetch: true, latestSeenLogTime: '', sessionLogs: [],
+                isStopping: false, stopProgress: 0
+            }
+        },
+        mounted() {
+            this.fetchAppInfo(); this.loadMappings(); this.fetchBackendLogs();
+            this.pollingInterval = setInterval(() => { this.fetchSyncStatus(); this.fetchBackendLogs(); }, 1500);
+        },
+        unmounted() { clearInterval(this.pollingInterval); },
+        methods: {
+            showToast(msg) { this.message = msg; setTimeout(() => { this.message = ''; }, 3000); },
+            async fetchAppInfo() {
+                try { this.appInfo = await (await fetch('/api/app_info')).json(); } catch (e) {}
+            },
+            async loadMappings() { this.mappings = await (await fetch('/api/mappings')).json(); },
+            async addMapping() {
+                if (!this.newMap.source_id || !this.newMap.target_id) return;
+                const fd = new FormData(); fd.append('source_id', this.newMap.source_id); fd.append('target_id', this.newMap.target_id);
+                const res = await (await fetch('/api/mappings', { method: 'POST', body: fd })).json();
+                this.showToast(res.message); this.loadMappings(); this.newMap = { source_id: '', target_id: '' };
+            },
+            async deleteMapping(id) {
+                if(!confirm("确定要删除这条规则吗？")) return;
+                const res = await (await fetch(`/api/mappings/${id}`, { method: 'DELETE' })).json();
+                this.showToast(res.message); this.loadMappings();
+            },
+            async startSync() {
+                if (!this.syncForm.source_id || !this.syncForm.target_id) return this.showToast("填频道 ID！");
+                const fd = new FormData();
+                Object.keys(this.syncForm).forEach(k => fd.append(k, this.syncForm[k] || (k.includes('id') && k !== 'source_id' && k !== 'target_id' ? '0' : '')));
+                const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
+                this.showToast(res.message);
+            },
+            async stopSync() {
+                const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
+                this.showToast(res.message);
+
+                this.isStopping = true;
+                this.stopProgress = 0;
+                const stepTime = 100;
+                const totalSteps = 3000 / stepTime;
+
+                const timer = setInterval(() => {
+                    this.stopProgress += (100 / totalSteps);
+                    if (this.stopProgress >= 100) {
+                        clearInterval(timer);
+                        this.isStopping = false;
+                        this.stopProgress = 0;
+                    }
+                }, stepTime);
+            },
+            async fetchSyncStatus() { try { this.syncStatus = await (await fetch('/api/sync_status')).json(); } catch(e){} },
+            async fetchBackendLogs() {
+                try {
+                    const data = await (await fetch('/api/logs/backend')).json();
+                    if (data.length === 0) return;
+
+                    if (this.isFirstLogFetch) {
+                        this.latestSeenLogTime = data[0].time;
+                        this.isFirstLogFetch = false;
+                        return;
+                    }
+
+                    const newLogs = data.filter(log => log.time > this.latestSeenLogTime);
+                    if (newLogs.length > 0) {
+                        this.latestSeenLogTime = newLogs[0].time;
+                        this.sessionLogs = [...newLogs, ...this.sessionLogs];
+                    }
+                } catch(e){}
+            }
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
