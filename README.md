@@ -2,7 +2,8 @@
 本项目是一个现代化、可视化的 Telegram 频道同步与历史消息搬运工具。它采用前后端分离的 Web UI 面板进行管理，支持频道实时监听同步、断点续传，并首创了 **Aiogram + Pyrofork 双引擎架构**，以满足不同场景下海量历史数据的安全迁移。
 
 [GitHub 仓库地址](https://github.com/RRHTY/tg-channel-sync)
-<img width="1522" height="1010" alt="image" src="https://github.com/user-attachments/assets/d2d16ca6-bc84-41d5-80d5-684585c8cb2d" />
+<img width="1492" height="1176" alt="image" src="https://github.com/user-attachments/assets/3bb25e20-1f76-4447-8e90-9c23e7708aec" />
+
 
 <img width="1194" height="1002" alt="image" src="https://github.com/user-attachments/assets/87c66f35-dde2-4afc-b7df-1534b56d8032" />
 
