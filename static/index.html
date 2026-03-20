@@ -256,7 +256,7 @@
                 const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
                 this.showToast(res.message);
                 this.isStopping = true; this.stopProgress = 0;
-                const stepTime = 100; const totalSteps = 3000 / stepTime;
+                const stepTime = 100; const totalSteps = 8000 / stepTime;
                 const timer = setInterval(() => {
                     this.stopProgress += (100 / totalSteps);
                     if (this.stopProgress >= 100) { clearInterval(timer); this.isStopping = false; this.stopProgress = 0; }
