@@ -11,8 +11,7 @@
         .card { background-color: white; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 1.5rem; margin-bottom: 1.5rem; }
         .log-container::-webkit-scrollbar { width: 6px; }
         .log-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
-        input[type=number]::-webkit-inner-spin-button,
-        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
 </head>
 <body class="text-gray-800 p-8 font-sans">
@@ -20,13 +19,15 @@
     <div class="flex justify-between items-center mb-8 border-b border-gray-200 pb-4">
         <div class="flex items-center gap-4">
             <h1 class="text-2xl font-bold text-gray-900">杏铃同步台</h1>
-
             <div class="flex gap-2">
                 <a v-if="appInfo.bot.username" :href="'https://t.me/' + appInfo.bot.username" target="_blank" class="text-sm font-normal text-blue-600 hover:text-blue-800 hover:underline flex items-center bg-blue-50 px-2 py-1 rounded transition">
                     🤖 {{ appInfo.bot.name }} (@{{ appInfo.bot.username }})
                 </a>
                 <span v-if="appInfo.user.name" class="text-sm font-normal text-purple-600 flex items-center bg-purple-50 px-2 py-1 rounded">
                     👤 {{ appInfo.user.name }}
+                </span>
+                <span v-else class="text-sm font-normal text-gray-400 flex items-center bg-gray-100 px-2 py-1 rounded">
+                    🚫 API 账号未配置 (运行于纯 Bot 模式)
                 </span>
             </div>
         </div>
@@ -91,18 +92,22 @@
                 </div>
 
                 <div class="flex bg-white rounded-lg border border-gray-200 p-1">
-                    <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">① API 拉取</button>
-                    <button @click="syncForm.mode = 'json'" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">② JSON 导入</button>
-                    <button @click="syncForm.mode = 'blind'" :class="syncForm.mode === 'blind' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">③ ID 盲猜</button>
+                    <button @click="syncForm.mode = 'json'; blindConfirm = false" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">纯Bot: JSON 导入</button>
+                    <button @click="syncForm.mode = 'blind'; blindConfirm = false" :class="syncForm.mode === 'blind' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">纯Bot: ID 盲猜</button>
+                    <button @click="syncForm.mode = 'api'; blindConfirm = false" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">账号: API 拉取</button>
                 </div>
 
                 <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
-                    <p class="font-bold mb-1">💡 模式说明：</p>
-                    <p>此模式需要您在电脑端 Telegram 导出频道数据（JSON 格式），并将包含媒体文件夹的目录路径填入下方。机器人将读取本地文件进行上传同步，稳定性最高。</p>
+                    <p class="font-bold mb-1">💡 JSON 模式说明：</p>
+                    <p>纯Bot即可运行。需电脑端导出频道数据(JSON格式)，机器人读取本地文件后直接上传同步，极度稳定。</p>
                 </div>
                 <div v-if="syncForm.mode === 'blind'" class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-3 text-xs rounded shadow-sm">
-                    <p class="font-bold mb-1">⚠️ 风险警告：</p>
-                    <p><b>原理：</b>按消息 ID 顺序尝试复制。<b>风险：</b>会产生大量无效请求，频繁操作可能导致您的 API 被官方封禁。<b>注意：</b>停止任务时后台需要约 5 秒处理当前状态，请勿频繁启停。</p>
+                    <p class="font-bold mb-1">⚠️ 盲猜风险警告：</p>
+                    <p>纯Bot即可运行。通过消息ID暴力尝试，产生大量无效请求极易被官方封禁。【暂未测试】。</p>
+                </div>
+                <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
+                    <p class="font-bold mb-1">🔑 API 拉取说明：</p>
+                    <p>需在后台环境配置 API_ID 并验证手机号。借助真实用户身份秒拉历史列表交由机器人转发。</p>
                 </div>
 
                 <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
@@ -111,7 +116,7 @@
                 </div>
 
                 <div v-if="syncForm.mode === 'api' || syncForm.mode === 'blind'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                    <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span v-if="syncForm.mode==='api'" class="text-gray-400">(可选)</span><span v-else class="text-red-400">(必填)</span></label>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span v-if="syncForm.mode==='api'" class="text-gray-400">(不填则拉取全部)</span><span v-else class="text-red-400">(盲猜必填)</span></label>
                     <div class="flex gap-2">
                         <input v-model="syncForm.start_id" type="number" placeholder="起始 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
                         <input v-model="syncForm.end_id" type="number" placeholder="结束 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
@@ -120,12 +125,17 @@
 
                 <div>
                     <label class="block text-xs font-medium text-gray-700 mb-1">单条处理延时 (秒): </label>
-                    <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="自由输入，最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
                 </div>
             </div>
 
             <div class="mt-4">
-                <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition shadow">🚀 启动 {{ syncForm.mode.toUpperCase() }} 同步任务</button>
+                <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" 
+                        :class="syncForm.mode === 'blind' && blindConfirm ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-800 hover:bg-gray-900'"
+                        class="w-full text-white px-4 py-2 rounded transition shadow">
+                    {{ syncForm.mode === 'blind' && blindConfirm ? '⚠️ 风险极高！再次点击确认启动 BLIND' : '🚀 启动 ' + syncForm.mode.toUpperCase() + ' 同步任务' }}
+                </button>
+                
                 <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition shadow">⏹ 停止 / 暂停当前任务</button>
 
                 <div v-if="isStopping" class="w-full bg-orange-50 border border-orange-200 rounded p-3 text-center shadow-inner">
@@ -158,13 +168,14 @@
     createApp({
         data() {
             return {
-                appInfo: { bot: {name: '', username: ''}, user: {name: ''} },
+                appInfo: { bot: {name: '', username: ''}, user: {name: '', status: ''} },
                 mappings: [], newMap: { source_id: '', target_id: '' },
-                syncForm: { mode: 'api', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
+                syncForm: { mode: 'json', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
                 syncStatus: { is_syncing: false, mode: '', total: 0, current: 0, current_text: '', current_link: '', skipped: 0 },
                 message: '', pollingInterval: null,
                 isFirstLogFetch: true, latestSeenLogTime: '', sessionLogs: [],
-                isStopping: false, stopProgress: 0
+                isStopping: false, stopProgress: 0,
+                blindConfirm: false // 盲猜二次确认标志
             }
         },
         mounted() {
@@ -190,21 +201,36 @@
                 this.showToast(res.message); this.loadMappings();
             },
             async startSync() {
+                // API 模式检查
+                if (this.syncForm.mode === 'api' && this.appInfo.user.status === '未配置') {
+                    return this.showToast("API账号未配置！");
+                }
+                
+                // 盲猜模式：二次确认逻辑
+                if (this.syncForm.mode === 'blind' && !this.blindConfirm) {
+                    this.blindConfirm = true;
+                    this.showToast("⚠️ 警告：盲猜模式风险极高！请再次点击按钮确认执行。");
+                    // 5秒内不点自动重置状态
+                    setTimeout(() => { this.blindConfirm = false; }, 5000);
+                    return;
+                }
+                
                 if (!this.syncForm.source_id || !this.syncForm.target_id) return this.showToast("填频道 ID！");
                 const fd = new FormData();
                 Object.keys(this.syncForm).forEach(k => fd.append(k, this.syncForm[k] || (k.includes('id') && k !== 'source_id' && k !== 'target_id' ? '0' : '')));
                 const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
                 this.showToast(res.message);
+                
+                // 启动后重置确认状态
+                this.blindConfirm = false;
             },
             async stopSync() {
                 const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
                 this.showToast(res.message);
-
                 this.isStopping = true;
                 this.stopProgress = 0;
                 const stepTime = 100;
                 const totalSteps = 3000 / stepTime;
-
                 const timer = setInterval(() => {
                     this.stopProgress += (100 / totalSteps);
                     if (this.stopProgress >= 100) {
@@ -219,13 +245,11 @@
                 try {
                     const data = await (await fetch('/api/logs/backend')).json();
                     if (data.length === 0) return;
-
                     if (this.isFirstLogFetch) {
                         this.latestSeenLogTime = data[0].time;
                         this.isFirstLogFetch = false;
                         return;
                     }
-
                     const newLogs = data.filter(log => log.time > this.latestSeenLogTime);
                     if (newLogs.length > 0) {
                         this.latestSeenLogTime = newLogs[0].time;

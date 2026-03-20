@@ -1,0 +1,19 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 敏感信息 
+.env
+*.session
+*.session-journal
+data.db
+
+# 编辑器配置
+.idea/
+.vscode/

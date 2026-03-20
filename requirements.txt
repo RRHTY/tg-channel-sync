@@ -1,7 +1,9 @@
+aiogram>=3.4.0
 pyrofork>=2.2.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
 aiosqlite>=0.20.0
 python-multipart>=0.0.9
 PySocks>=1.7.1
-tgcrypto>=1.2.5
+tgcrypto>=1.2.5 
+python-dotenv>=1.0.1
