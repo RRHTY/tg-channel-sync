@@ -9,9 +9,14 @@ from fastapi.responses import FileResponse
 import uvicorn
 from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
-
+from dotenv import load_dotenv # 新增：导入 load_dotenv
 import database as db
 import bot_engine
+
+# 新增：加载 .env 文件，并获取端口和熔断阈值 (带默认值兜底)
+load_dotenv()
+PORT = int(os.getenv("PORT", 8011))
+MAX_FAILS = int(os.getenv("MAX_FAILS", 10))
 
 app_info_cache = {"bot": {"name": "", "username": ""}, "user": {"name": "", "status": "未配置"}}
 sync_state = {
@@ -199,7 +204,7 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
             sync_state["total"] = end_id - start_id + 1
             
             consecutive_fails = 0
-            max_fails = 10 # 熔断阈值
+            max_fails = MAX_FAILS # 熔断阈值
             
             for msg_id in range(start_id, end_id + 1):
                 if sync_state["stop_requested"]: break
@@ -289,4 +294,4 @@ async def handle_floodwait(wait_time):
     await asyncio.sleep(wait_time)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8011)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
