@@ -199,7 +199,7 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
             sync_state["total"] = end_id - start_id + 1
             
             consecutive_fails = 0
-            max_fails = 50 # 熔断阈值
+            max_fails = 10 # 熔断阈值
             
             for msg_id in range(start_id, end_id + 1):
                 if sync_state["stop_requested"]: break
@@ -289,4 +289,4 @@ async def handle_floodwait(wait_time):
     await asyncio.sleep(wait_time)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8011)
