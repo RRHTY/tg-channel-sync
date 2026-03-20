@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import html # 新增：用于处理富文本的 HTML 转义
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Form
 from fastapi.staticfiles import StaticFiles
@@ -51,23 +52,19 @@ async def lifespan(app: FastAPI):
     yield
 
     print("⏳ 正在安全关闭系统...")
-    # 1. 关闭 Pyrofork 用户客户端
     try:
         if bot_engine.pyro_user_app and bot_engine.pyro_user_app.is_initialized:
             await bot_engine.pyro_user_app.stop(block=False)
     except Exception:
         pass
 
-    # 2. 核心修复：手动关闭 aiogram bot 的会话
     try:
-        # aiogram 3.x 需要手动关闭 session 以避免 "Unclosed client session" 警告
         await bot_engine.aiogram_bot.session.close()
         print("✅ Bot 会话已关闭")
     except Exception as e:
         print(f"❌ 关闭 Bot 会话时出错: {e}")
 
     print("👋 系统已安全退出")
-
 
 app = FastAPI(title="杏铃同步台", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -112,9 +109,8 @@ async def start_sync(
 ):
     if sync_state["is_syncing"]: return {"status": "error", "message": "任务运行中！"}
     
-    # === 模式检查核心 ===
     if mode == "api" and not bot_engine.pyro_user_app:
-        error_msg = "❌ API模式受限：未在 .env 中检测到有效的 API_ID 和 API_HASH。请使用 JSON 或 盲猜 功能。"
+        error_msg = "❌ API模式受限：您未在代码中填写 API_ID。当前处于纯Bot模式，请使用 JSON 或 盲猜 功能。"
         asyncio.create_task(db.add_log("ERROR", error_msg))
         return {"status": "error", "message": "API信息未配置，请查看系统日志"}
 
@@ -123,28 +119,71 @@ async def start_sync(
     background_tasks.add_task(process_master_sync, mode, source_id, target_id, delay, start_id, end_id, json_path)
     return {"status": "success", "message": f"已启动 {mode.upper()} 任务"}
 
+
+# ================= 新增：JSON 富文本解析器 =================
+def parse_tg_json_text(text_list):
+    """将 TG 导出的 JSON 文本实体解析为安全的 HTML 格式"""
+    if isinstance(text_list, str): 
+        return html.escape(text_list) # 防止注入
+    
+    html_text = ""
+    for t in text_list:
+        if isinstance(t, str):
+            html_text += html.escape(t)
+        else:
+            t_type = t.get('type')
+            inner = html.escape(t.get('text', ''))
+            if not inner: continue
+            
+            if t_type == 'bold': html_text += f"<b>{inner}</b>"
+            elif t_type == 'italic': html_text += f"<i>{inner}</i>"
+            elif t_type == 'code': html_text += f"<code>{inner}</code>"
+            elif t_type == 'pre': html_text += f"<pre>{inner}</pre>"
+            elif t_type == 'strikethrough': html_text += f"<s>{inner}</s>"
+            elif t_type == 'underline': html_text += f"<u>{inner}</u>"
+            elif t_type in ['text_link', 'link']:
+                href = t.get('href', inner)
+                html_text += f"<a href='{href}'>{inner}</a>"
+            else: 
+                html_text += inner
+    return html_text
+# =========================================================
+
+
 async def process_master_sync(mode: str, source_id: int, target_id: int, delay: float, start_id: int, end_id: int, json_path: str):
     global sync_state
     safe_delay = max(0.5, float(delay))
     sync_state.update({"is_syncing": True, "mode": mode.upper(), "current": 0, "skipped": 0, "total": 0, "stop_requested": False})
-    bot = bot_engine.aiogram_bot # 全部使用 aiogram 发送消息
+    bot = bot_engine.aiogram_bot 
 
     try:
         if mode == "api":
-            history_gen = bot_engine.pyro_user_app.get_chat_history(source_id)
-            msgs = []
-            async for msg in history_gen:
+            # 优化：动态获取结束 ID 防止全量拉取
+            if not start_id: start_id = 1
+            if not end_id:
+                async for msg in bot_engine.pyro_user_app.get_chat_history(source_id, limit=1):
+                    end_id = msg.id
+            if not end_id: end_id = 1
+            
+            sync_state["total"] = end_id - start_id + 1
+            
+            # 核心优化：100条分块拉取，彻底解决内存爆炸，天然从旧到新排序
+            chunk_size = 100
+            for chunk_start in range(start_id, end_id + 1, chunk_size):
                 if sync_state["stop_requested"]: break
-                if start_id and end_id and not (start_id <= msg.id <= end_id): continue
-                if start_id and msg.id < start_id: continue
-                if end_id and msg.id > end_id: continue
-                msgs.append(msg)
-
-            if not sync_state["stop_requested"]:
-                msgs.reverse()
-                sync_state["total"] = len(msgs)
+                chunk_end = min(chunk_start + chunk_size - 1, end_id)
+                ids_to_fetch = list(range(chunk_start, chunk_end + 1))
+                
+                try:
+                    msgs = await bot_engine.pyro_user_app.get_messages(source_id, ids_to_fetch)
+                except Exception as e:
+                    await db.add_log("ERROR", f"批量获取历史失败: {e}")
+                    continue
+                
                 for msg in msgs:
                     if sync_state["stop_requested"]: break
+                    if msg is None or msg.empty: continue # 跳过已被删除的消息
+                    
                     if await update_state_and_check_skip(source_id, msg.id, msg.text or "[媒体]"): continue
                     try:
                         copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
@@ -152,42 +191,36 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                     except TelegramRetryAfter as e:
                         await handle_floodwait(e.retry_after)
                     except Exception as e:
-                        await db.add_log("ERROR", f"发送失败 ID {msg.id}: {e}")
+                        await db.add_log("ERROR", f"API同步失败 ID {msg.id}: {e}")
                     await asyncio.sleep(safe_delay)
 
         elif mode == "blind":
             if start_id == 0 or end_id == 0: raise ValueError("必须填写起止ID！")
             sync_state["total"] = end_id - start_id + 1
             
-            # 修复 4：新增盲猜熔断机制
-            consecutive_fails = 0  # 连续失败计数器
-            max_fails = 30        # 阈值：连续 30 次 400 错误则熔断
+            consecutive_fails = 0
+            max_fails = 50 # 熔断阈值
             
             for msg_id in range(start_id, end_id + 1):
                 if sync_state["stop_requested"]: break
                 
-                # 如果是跳过的消息（证明存在），重置失败计数
                 if await update_state_and_check_skip(source_id, msg_id, "盲猜尝试中..."): 
                     consecutive_fails = 0
                     continue
-                    
                 try:
                     copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg_id)
                     await record_success(source_id, msg_id, copied.message_id)
                     sync_state["current_text"] = "✅ 同步成功"
-                    consecutive_fails = 0 # 成功则重置计数器
+                    consecutive_fails = 0
                 except TelegramRetryAfter as e:
                     await handle_floodwait(e.retry_after)
                 except TelegramBadRequest:
                     sync_state["current_text"] = "❌ 消息不存在"
-                    consecutive_fails += 1 # 累加失败次数
-                    
-                    # 触发熔断保护
+                    consecutive_fails += 1
                     if consecutive_fails >= max_fails:
-                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {max_fails} 个 ID 不存在。为保护 API，任务强制终止！")
-                        sync_state["stop_requested"] = True # 通知外层安全退出
+                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {max_fails} 个 ID 不存在，任务强制终止！")
+                        sync_state["stop_requested"] = True
                         break
-                        
                 await asyncio.sleep(safe_delay)
 
         elif mode == "json":
@@ -201,7 +234,10 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
             for m in msgs:
                 if sync_state["stop_requested"]: break
                 msg_id = m.get('id')
-                text = "".join([t if isinstance(t, str) else t.get('text', '') for t in m.get('text', [])])
+                
+                # 核心优化：调用富文本解析器
+                text = parse_tg_json_text(m.get('text', []))
+                
                 if await update_state_and_check_skip(source_id, msg_id, text[:50] or "[媒体]"): continue
 
                 media_path = m.get('photo') or m.get('file')
@@ -211,11 +247,12 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                     sent = None
                     if abs_media_path and os.path.exists(abs_media_path):
                         media_file = FSInputFile(abs_media_path)
-                        if m.get('photo'): sent = await bot.send_photo(chat_id=target_id, photo=media_file, caption=text)
-                        elif m.get('media_type') == 'video_file': sent = await bot.send_video(chat_id=target_id, video=media_file, caption=text)
-                        else: sent = await bot.send_document(chat_id=target_id, document=media_file, caption=text)
+                        # 加入 parse_mode="HTML" 支持富文本
+                        if m.get('photo'): sent = await bot.send_photo(chat_id=target_id, photo=media_file, caption=text, parse_mode="HTML")
+                        elif m.get('media_type') == 'video_file': sent = await bot.send_video(chat_id=target_id, video=media_file, caption=text, parse_mode="HTML")
+                        else: sent = await bot.send_document(chat_id=target_id, document=media_file, caption=text, parse_mode="HTML")
                     elif text.strip():
-                        sent = await bot.send_message(chat_id=target_id, text=text)
+                        sent = await bot.send_message(chat_id=target_id, text=text, parse_mode="HTML")
 
                     if sent: await record_success(source_id, msg_id, sent.message_id)
                 except TelegramRetryAfter as e:
@@ -252,4 +289,4 @@ async def handle_floodwait(wait_time):
     await asyncio.sleep(wait_time)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8011)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
