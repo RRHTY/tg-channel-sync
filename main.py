@@ -158,17 +158,36 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
         elif mode == "blind":
             if start_id == 0 or end_id == 0: raise ValueError("必须填写起止ID！")
             sync_state["total"] = end_id - start_id + 1
+            
+            # 修复 4：新增盲猜熔断机制
+            consecutive_fails = 0  # 连续失败计数器
+            max_fails = 30        # 阈值：连续 30 次 400 错误则熔断
+            
             for msg_id in range(start_id, end_id + 1):
                 if sync_state["stop_requested"]: break
-                if await update_state_and_check_skip(source_id, msg_id, "盲猜尝试中..."): continue
+                
+                # 如果是跳过的消息（证明存在），重置失败计数
+                if await update_state_and_check_skip(source_id, msg_id, "盲猜尝试中..."): 
+                    consecutive_fails = 0
+                    continue
+                    
                 try:
                     copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg_id)
                     await record_success(source_id, msg_id, copied.message_id)
                     sync_state["current_text"] = "✅ 同步成功"
+                    consecutive_fails = 0 # 成功则重置计数器
                 except TelegramRetryAfter as e:
                     await handle_floodwait(e.retry_after)
                 except TelegramBadRequest:
                     sync_state["current_text"] = "❌ 消息不存在"
+                    consecutive_fails += 1 # 累加失败次数
+                    
+                    # 触发熔断保护
+                    if consecutive_fails >= max_fails:
+                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {max_fails} 个 ID 不存在。为保护 API，任务强制终止！")
+                        sync_state["stop_requested"] = True # 通知外层安全退出
+                        break
+                        
                 await asyncio.sleep(safe_delay)
 
         elif mode == "json":

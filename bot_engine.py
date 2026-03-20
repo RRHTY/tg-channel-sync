@@ -5,6 +5,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from pyrogram import Client
 import database as db
+import asyncio
+from aiogram.exceptions import TelegramRetryAfter
 
 # 加载 .env 环境变量
 load_dotenv()
@@ -31,12 +33,22 @@ async def handle_new_post(message: Message):
     source_id = message.chat.id
     target_id = await db.get_target_channel(source_id)
     if not target_id: return
-    try:
-        copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
-        await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
-        await db.add_log("SUCCESS", f"[实时同步] 成功: {source_id} -> {target_id}")
-    except Exception as e:
-        await db.add_log("ERROR", f"[实时同步] 失败 ID {message.message_id}: {e}")
+    
+    # 修复 3：加入最大重试机制 (Anti-Flood)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
+            await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
+            await db.add_log("SUCCESS", f"[实时同步] 成功: {source_id} -> {target_id}")
+            break # 成功则跳出循环
+        except TelegramRetryAfter as e:
+            # 触发风控，主动休眠对应时间后重试
+            await db.add_log("WARNING", f"[实时同步] 触发风控，等待 {e.retry_after} 秒后重试 (第 {attempt+1} 次)")
+            await asyncio.sleep(e.retry_after)
+        except Exception as e:
+            await db.add_log("ERROR", f"[实时同步] 失败 ID {message.message_id}: {e}")
+            break # 其他不可恢复错误，直接跳出
 
 @dp.edited_channel_post()
 async def handle_edited_post(message: Message):
