@@ -43,17 +43,13 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div>
             <div class="card">
-                <h2 class="text-lg font-semibold mb-4 border-b pb-2">添加实时同步规则</h2>
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">基础频道映射</h2>
                 <div class="space-y-3">
                     <input v-model="newMap.source_id" type="text" placeholder="源频道 ID (例如: -100123...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
                     <input v-model="newMap.target_id" type="text" placeholder="目标频道 ID (例如: -100987...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
                     <button @click="addMapping" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">保存规则</button>
                 </div>
-            </div>
-
-            <div class="card">
-                <h2 class="text-lg font-semibold mb-4 border-b pb-2">当前生效的规则</h2>
-                <ul class="space-y-2 text-sm">
+                <ul class="mt-4 space-y-2 text-sm">
                     <li v-for="map in mappings" :key="map.source_id" class="flex justify-between items-center p-2 bg-gray-50 rounded group">
                         <div class="flex-1 flex justify-between px-2">
                             <span class="font-mono text-gray-500">{{ map.source_id }}</span>
@@ -63,6 +59,33 @@
                         <button @click="deleteMapping(map.source_id)" class="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition px-2">删除</button>
                     </li>
                     <li v-if="mappings.length === 0" class="text-gray-400 text-center py-2">暂无规则</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">高级内容过滤 (正则)</h2>
+                <div class="space-y-3 mb-4">
+                    <select v-model="newFilter.rule_type" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-white">
+                        <option value="replace_text">文本匹配：替换 / 屏蔽</option>
+                        <option value="skip_media">媒体匹配：跳过该图片/视频</option>
+                    </select>
+                    <input v-model="newFilter.pattern" type="text" placeholder="正则表达式 (例如: 广告.*直达 或 \.mp4)" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
+                    <input v-if="newFilter.rule_type === 'replace_text'" v-model="newFilter.replacement" type="text" placeholder="替换为的内容 (留空则彻底删除匹配的字词)" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    <button @click="addFilter" class="w-full bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">添加过滤规则</button>
+                </div>
+                <ul class="space-y-2 text-sm">
+                    <li v-for="rule in filterRules" :key="rule.id" class="flex justify-between items-center p-2 bg-gray-50 rounded group">
+                        <div class="flex-1 px-2 overflow-hidden flex items-center">
+                            <span class="text-xs font-bold px-1.5 py-0.5 rounded mr-2 whitespace-nowrap" :class="rule.rule_type === 'replace_text' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'">
+                                {{ rule.rule_type === 'replace_text' ? '替换' : '屏蔽' }}
+                            </span>
+                            <span class="font-mono text-gray-800 truncate" :title="rule.pattern">{{ rule.pattern }}</span>
+                            <span v-if="rule.rule_type === 'replace_text'" class="text-gray-400 mx-1">→</span>
+                            <span v-if="rule.rule_type === 'replace_text'" class="text-green-600 font-mono truncate">{{ rule.replacement === '' ? '(删除)' : rule.replacement }}</span>
+                        </div>
+                        <button @click="deleteFilter(rule.id)" class="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition px-2">删除</button>
+                    </li>
+                    <li v-if="filterRules.length === 0" class="text-gray-400 text-center py-2">无激活的过滤规则</li>
                 </ul>
             </div>
         </div>
@@ -99,15 +122,15 @@
 
                 <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">💡 JSON 模式说明：</p>
-                    <p>纯Bot即可运行。需电脑端导出频道数据(JSON格式)，机器人读取本地文件后直接上传同步，极度稳定。</p>
+                    <p>纯Bot即可运行。机器人读取官方导出的本地JSON直接发送，极度稳定。<b>(支持应用所有过滤规则)</b></p>
                 </div>
                 <div v-if="syncForm.mode === 'blind'" class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">⚠️ 盲猜风险警告：</p>
-                    <p>纯Bot即可运行。通过消息ID暴力尝试，产生大量无效请求极易被官方封禁。【暂未测试】。</p>
+                    <p>纯Bot即可运行。暴力尝试ID极易被封禁。<b>注意：因无法提前预知内容，盲猜模式无法应用正则过滤规则。</b></p>
                 </div>
                 <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">🔑 API 拉取说明：</p>
-                    <p>需在后台环境配置 API_ID 并验证手机号。借助真实用户身份秒拉历史列表交由机器人转发。</p>
+                    <p>需在后台环境配置 API_ID 并验证手机号。真实用户身份秒拉历史列表后转发。<b>(完美支持所有过滤规则)</b></p>
                 </div>
 
                 <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
@@ -170,25 +193,24 @@
             return {
                 appInfo: { bot: {name: '', username: ''}, user: {name: '', status: ''} },
                 mappings: [], newMap: { source_id: '', target_id: '' },
+                filterRules: [], newFilter: { rule_type: 'replace_text', pattern: '', replacement: '' },
                 syncForm: { mode: 'json', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
                 syncStatus: { is_syncing: false, mode: '', total: 0, current: 0, current_text: '', current_link: '', skipped: 0 },
                 message: '', pollingInterval: null,
                 isFirstLogFetch: true, latestSeenLogTime: '', sessionLogs: [],
-                isStopping: false, stopProgress: 0,
-                blindConfirm: false // 盲猜二次确认标志
+                isStopping: false, stopProgress: 0, blindConfirm: false
             }
         },
         mounted() {
-            this.fetchAppInfo(); this.loadMappings(); this.fetchBackendLogs();
+            this.fetchAppInfo(); this.loadMappings(); this.loadFilters(); this.fetchBackendLogs();
             this.pollingInterval = setInterval(() => { this.fetchSyncStatus(); this.fetchBackendLogs(); }, 1500);
         },
         unmounted() { clearInterval(this.pollingInterval); },
         methods: {
             showToast(msg) { this.message = msg; setTimeout(() => { this.message = ''; }, 3000); },
-            async fetchAppInfo() {
-                try { this.appInfo = await (await fetch('/api/app_info')).json(); } catch (e) {}
-            },
+            async fetchAppInfo() { try { this.appInfo = await (await fetch('/api/app_info')).json(); } catch (e) {} },
             async loadMappings() { this.mappings = await (await fetch('/api/mappings')).json(); },
+            async loadFilters() { this.filterRules = await (await fetch('/api/filter_rules')).json(); },
             async addMapping() {
                 if (!this.newMap.source_id || !this.newMap.target_id) return;
                 const fd = new FormData(); fd.append('source_id', this.newMap.source_id); fd.append('target_id', this.newMap.target_id);
@@ -196,48 +218,47 @@
                 this.showToast(res.message); this.loadMappings(); this.newMap = { source_id: '', target_id: '' };
             },
             async deleteMapping(id) {
-                if(!confirm("确定要删除这条规则吗？")) return;
+                if(!confirm("确定要删除这条映射规则吗？")) return;
                 const res = await (await fetch(`/api/mappings/${id}`, { method: 'DELETE' })).json();
                 this.showToast(res.message); this.loadMappings();
             },
+            async addFilter() {
+                if (!this.newFilter.pattern) return this.showToast("正则表达不能为空！");
+                const fd = new FormData();
+                fd.append('rule_type', this.newFilter.rule_type);
+                fd.append('pattern', this.newFilter.pattern);
+                fd.append('replacement', this.newFilter.replacement);
+                const res = await (await fetch('/api/filter_rules', { method: 'POST', body: fd })).json();
+                this.showToast(res.message); this.loadFilters(); this.newFilter.pattern = ''; this.newFilter.replacement = '';
+            },
+            async deleteFilter(id) {
+                if(!confirm("确定要删除这条过滤规则吗？")) return;
+                const res = await (await fetch(`/api/filter_rules/${id}`, { method: 'DELETE' })).json();
+                this.showToast(res.message); this.loadFilters();
+            },
             async startSync() {
-                // API 模式检查
-                if (this.syncForm.mode === 'api' && this.appInfo.user.status === '未配置') {
-                    return this.showToast("API账号未配置！");
-                }
-                
-                // 盲猜模式：二次确认逻辑
+                if (this.syncForm.mode === 'api' && this.appInfo.user.status === '未配置') return this.showToast("API账号未配置！");
                 if (this.syncForm.mode === 'blind' && !this.blindConfirm) {
                     this.blindConfirm = true;
                     this.showToast("⚠️ 警告：盲猜模式风险极高！请再次点击按钮确认执行。");
-                    // 5秒内不点自动重置状态
                     setTimeout(() => { this.blindConfirm = false; }, 5000);
                     return;
                 }
-                
                 if (!this.syncForm.source_id || !this.syncForm.target_id) return this.showToast("填频道 ID！");
                 const fd = new FormData();
                 Object.keys(this.syncForm).forEach(k => fd.append(k, this.syncForm[k] || (k.includes('id') && k !== 'source_id' && k !== 'target_id' ? '0' : '')));
                 const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
                 this.showToast(res.message);
-                
-                // 启动后重置确认状态
                 this.blindConfirm = false;
             },
             async stopSync() {
                 const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
                 this.showToast(res.message);
-                this.isStopping = true;
-                this.stopProgress = 0;
-                const stepTime = 100;
-                const totalSteps = 3000 / stepTime;
+                this.isStopping = true; this.stopProgress = 0;
+                const stepTime = 100; const totalSteps = 3000 / stepTime;
                 const timer = setInterval(() => {
                     this.stopProgress += (100 / totalSteps);
-                    if (this.stopProgress >= 100) {
-                        clearInterval(timer);
-                        this.isStopping = false;
-                        this.stopProgress = 0;
-                    }
+                    if (this.stopProgress >= 100) { clearInterval(timer); this.isStopping = false; this.stopProgress = 0; }
                 }, stepTime);
             },
             async fetchSyncStatus() { try { this.syncStatus = await (await fetch('/api/sync_status')).json(); } catch(e){} },
@@ -246,9 +267,7 @@
                     const data = await (await fetch('/api/logs/backend')).json();
                     if (data.length === 0) return;
                     if (this.isFirstLogFetch) {
-                        this.latestSeenLogTime = data[0].time;
-                        this.isFirstLogFetch = false;
-                        return;
+                        this.latestSeenLogTime = data[0].time; this.isFirstLogFetch = false; return;
                     }
                     const newLogs = data.filter(log => log.time > this.latestSeenLogTime);
                     if (newLogs.length > 0) {

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-import html # 新增：用于处理富文本的 HTML 转义
+import html
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Form
 from fastapi.staticfiles import StaticFiles
@@ -9,11 +9,11 @@ from fastapi.responses import FileResponse
 import uvicorn
 from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
-from dotenv import load_dotenv # 新增：导入 load_dotenv
+from dotenv import load_dotenv
+
 import database as db
 import bot_engine
 
-# 新增：加载 .env 文件，并获取端口和熔断阈值 (带默认值兜底)
 load_dotenv()
 PORT = int(os.getenv("PORT", 8011))
 MAX_FAILS = int(os.getenv("MAX_FAILS", 10))
@@ -28,19 +28,15 @@ sync_state = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
-
-    # 1. 启动 Aiogram (纯 Bot 模式)
     try:
         me = await bot_engine.aiogram_bot.get_me()
         app_info_cache["bot"] = {"name": me.first_name, "username": me.username}
         await db.add_log("INFO", f"🚀 [Aiogram 纯Bot模式] 已就绪: {me.first_name}")
         print(f"✅ Bot 已上线: {me.first_name} (@{me.username})")
-        # 挂载后台轮询监听
         asyncio.create_task(bot_engine.dp.start_polling(bot_engine.aiogram_bot))
     except Exception as e:
         await db.add_log("ERROR", f"Bot启动失败: {e}")
 
-    # 2. 尝试启动 Pyrofork (API 辅助账号)
     bot_engine.init_user_client()
     if bot_engine.pyro_user_app:
         try:
@@ -60,15 +56,12 @@ async def lifespan(app: FastAPI):
     try:
         if bot_engine.pyro_user_app and bot_engine.pyro_user_app.is_initialized:
             await bot_engine.pyro_user_app.stop(block=False)
-    except Exception:
-        pass
+    except Exception: pass
 
     try:
         await bot_engine.aiogram_bot.session.close()
         print("✅ Bot 会话已关闭")
-    except Exception as e:
-        print(f"❌ 关闭 Bot 会话时出错: {e}")
-
+    except Exception as e: print(f"❌ 关闭 Bot 会话时出错: {e}")
     print("👋 系统已安全退出")
 
 app = FastAPI(title="杏铃同步台", lifespan=lifespan)
@@ -80,6 +73,7 @@ async def serve_index(): return FileResponse("static/index.html")
 @app.get("/api/app_info")
 async def get_app_info(): return app_info_cache
 
+# ====== 路由: 频道映射 ======
 @app.get("/api/mappings")
 async def get_mappings(): return [{"source_id": m[0], "target_id": m[1]} for m in await db.get_all_channel_mappings()]
 
@@ -93,6 +87,23 @@ async def delete_mapping(source_id: int):
     await db.delete_channel_mapping(source_id)
     return {"status": "success", "message": "规则已删除"}
 
+# ====== 路由: 高级过滤规则 ======
+@app.get("/api/filter_rules")
+async def get_filter_rules():
+    rules = await db.get_all_filter_rules()
+    return [{"id": r[0], "rule_type": r[1], "pattern": r[2], "replacement": r[3]} for r in rules]
+
+@app.post("/api/filter_rules")
+async def add_filter_rule(rule_type: str = Form(...), pattern: str = Form(...), replacement: str = Form("")):
+    await db.add_filter_rule(rule_type, pattern, replacement)
+    return {"status": "success", "message": "过滤规则添加成功"}
+
+@app.delete("/api/filter_rules/{rule_id}")
+async def delete_filter_rule(rule_id: int):
+    await db.delete_filter_rule(rule_id)
+    return {"status": "success", "message": "规则已删除"}
+
+# ====== 路由: 状态与日志 ======
 @app.get("/api/sync_status")
 async def get_sync_status(): return sync_state
 
@@ -115,31 +126,24 @@ async def start_sync(
     if sync_state["is_syncing"]: return {"status": "error", "message": "任务运行中！"}
     
     if mode == "api" and not bot_engine.pyro_user_app:
-        error_msg = "❌ API模式受限：您未在代码中填写 API_ID。当前处于纯Bot模式，请使用 JSON 或 盲猜 功能。"
+        error_msg = "❌ API模式受限：您未配置 API 账号。"
         asyncio.create_task(db.add_log("ERROR", error_msg))
-        return {"status": "error", "message": "API信息未配置，请查看系统日志"}
+        return {"status": "error", "message": "API信息未配置"}
 
     if mode == "json" and not os.path.exists(json_path): return {"status": "error", "message": "找不到 JSON 文件！"}
 
     background_tasks.add_task(process_master_sync, mode, source_id, target_id, delay, start_id, end_id, json_path)
     return {"status": "success", "message": f"已启动 {mode.upper()} 任务"}
 
-
-# ================= 新增：JSON 富文本解析器 =================
 def parse_tg_json_text(text_list):
-    """将 TG 导出的 JSON 文本实体解析为安全的 HTML 格式"""
-    if isinstance(text_list, str): 
-        return html.escape(text_list) # 防止注入
-    
+    if isinstance(text_list, str): return html.escape(text_list)
     html_text = ""
     for t in text_list:
-        if isinstance(t, str):
-            html_text += html.escape(t)
+        if isinstance(t, str): html_text += html.escape(t)
         else:
             t_type = t.get('type')
             inner = html.escape(t.get('text', ''))
             if not inner: continue
-            
             if t_type == 'bold': html_text += f"<b>{inner}</b>"
             elif t_type == 'italic': html_text += f"<i>{inner}</i>"
             elif t_type == 'code': html_text += f"<code>{inner}</code>"
@@ -149,10 +153,8 @@ def parse_tg_json_text(text_list):
             elif t_type in ['text_link', 'link']:
                 href = t.get('href', inner)
                 html_text += f"<a href='{href}'>{inner}</a>"
-            else: 
-                html_text += inner
+            else: html_text += inner
     return html_text
-# =========================================================
 
 
 async def process_master_sync(mode: str, source_id: int, target_id: int, delay: float, start_id: int, end_id: int, json_path: str):
@@ -163,7 +165,6 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
 
     try:
         if mode == "api":
-            # 优化：动态获取结束 ID 防止全量拉取
             if not start_id: start_id = 1
             if not end_id:
                 async for msg in bot_engine.pyro_user_app.get_chat_history(source_id, limit=1):
@@ -171,8 +172,6 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
             if not end_id: end_id = 1
             
             sync_state["total"] = end_id - start_id + 1
-            
-            # 核心优化：100条分块拉取，彻底解决内存爆炸，天然从旧到新排序
             chunk_size = 100
             for chunk_start in range(start_id, end_id + 1, chunk_size):
                 if sync_state["stop_requested"]: break
@@ -187,11 +186,36 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                 
                 for msg in msgs:
                     if sync_state["stop_requested"]: break
-                    if msg is None or msg.empty: continue # 跳过已被删除的消息
+                    if msg is None or msg.empty: continue
                     
-                    if await update_state_and_check_skip(source_id, msg.id, msg.text or "[媒体]"): continue
+                    # 提取参数喂给过滤引擎
+                    has_media = msg.media is not None
+                    file_name = ""
+                    if msg.document: file_name = msg.document.file_name or ""
+                    elif msg.video: file_name = msg.video.file_name or ""
+                    elif msg.audio: file_name = msg.audio.file_name or ""
+                    
                     try:
-                        copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
+                        text_html = msg.text.html if msg.text else (msg.caption.html if msg.caption else "")
+                    except Exception:
+                        text_html = msg.text or msg.caption or ""
+
+                    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
+                    if should_skip:
+                        await db.add_log("INFO", f"[过滤跳过] API 拉取命中跳过规则，忽略消息 ID {msg.id}")
+                        continue
+                    if not has_media and not new_html.strip():
+                        continue # 全被删空了不发
+
+                    if await update_state_and_check_skip(source_id, msg.id, new_html[:50] or "[媒体]"): continue
+                    
+                    try:
+                        if new_html != text_html:
+                            if not has_media: copied = await bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML")
+                            else: copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id, caption=new_html, parse_mode="HTML")
+                        else:
+                            copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
+                        
                         await record_success(source_id, msg.id, copied.message_id)
                     except TelegramRetryAfter as e:
                         await handle_floodwait(e.retry_after)
@@ -202,16 +226,16 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
         elif mode == "blind":
             if start_id == 0 or end_id == 0: raise ValueError("必须填写起止ID！")
             sync_state["total"] = end_id - start_id + 1
-            
             consecutive_fails = 0
-            max_fails = MAX_FAILS # 熔断阈值
+            
+            # 盲猜模式提醒
+            rules = await db.get_all_filter_rules()
+            if rules: await db.add_log("WARNING", "⚠️ 盲猜模式无法提前读取内容，已自动忽略正则过滤规则！")
             
             for msg_id in range(start_id, end_id + 1):
                 if sync_state["stop_requested"]: break
-                
                 if await update_state_and_check_skip(source_id, msg_id, "盲猜尝试中..."): 
-                    consecutive_fails = 0
-                    continue
+                    consecutive_fails = 0; continue
                 try:
                     copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg_id)
                     await record_success(source_id, msg_id, copied.message_id)
@@ -222,15 +246,14 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                 except TelegramBadRequest:
                     sync_state["current_text"] = "❌ 消息不存在"
                     consecutive_fails += 1
-                    if consecutive_fails >= max_fails:
-                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {max_fails} 个 ID 不存在，任务强制终止！")
+                    if consecutive_fails >= MAX_FAILS:
+                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {MAX_FAILS} 个 ID 不存在，任务强制终止！")
                         sync_state["stop_requested"] = True
                         break
                 await asyncio.sleep(safe_delay)
 
         elif mode == "json":
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            with open(json_path, 'r', encoding='utf-8') as f: data = json.load(f)
             base_dir = os.path.dirname(os.path.abspath(json_path))
             msgs = [m for m in data.get('messages', []) if m.get('type') == 'message']
             if start_id and end_id: msgs = [m for m in msgs if start_id <= m.get('id', 0) <= end_id]
@@ -240,11 +263,18 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                 if sync_state["stop_requested"]: break
                 msg_id = m.get('id')
                 
-                # 核心优化：调用富文本解析器
-                text = parse_tg_json_text(m.get('text', []))
+                text_html = parse_tg_json_text(m.get('text', []))
+                has_media = 'photo' in m or 'file' in m or 'media_type' in m
+                file_name = m.get('file', '') 
                 
-                if await update_state_and_check_skip(source_id, msg_id, text[:50] or "[媒体]"): continue
+                should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
+                if should_skip:
+                    await db.add_log("INFO", f"[过滤跳过] JSON 命中跳过规则，忽略消息 ID {msg_id}")
+                    continue
+                if not has_media and not new_html.strip():
+                    continue 
 
+                if await update_state_and_check_skip(source_id, msg_id, new_html[:50] or "[媒体]"): continue
                 media_path = m.get('photo') or m.get('file')
                 abs_media_path = os.path.join(base_dir, media_path) if media_path else None
 
@@ -252,12 +282,11 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                     sent = None
                     if abs_media_path and os.path.exists(abs_media_path):
                         media_file = FSInputFile(abs_media_path)
-                        # 加入 parse_mode="HTML" 支持富文本
-                        if m.get('photo'): sent = await bot.send_photo(chat_id=target_id, photo=media_file, caption=text, parse_mode="HTML")
-                        elif m.get('media_type') == 'video_file': sent = await bot.send_video(chat_id=target_id, video=media_file, caption=text, parse_mode="HTML")
-                        else: sent = await bot.send_document(chat_id=target_id, document=media_file, caption=text, parse_mode="HTML")
-                    elif text.strip():
-                        sent = await bot.send_message(chat_id=target_id, text=text, parse_mode="HTML")
+                        if m.get('photo'): sent = await bot.send_photo(chat_id=target_id, photo=media_file, caption=new_html, parse_mode="HTML")
+                        elif m.get('media_type') == 'video_file': sent = await bot.send_video(chat_id=target_id, video=media_file, caption=new_html, parse_mode="HTML")
+                        else: sent = await bot.send_document(chat_id=target_id, document=media_file, caption=new_html, parse_mode="HTML")
+                    elif new_html.strip():
+                        sent = await bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML")
 
                     if sent: await record_success(source_id, msg_id, sent.message_id)
                 except TelegramRetryAfter as e:
@@ -266,10 +295,8 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                     await db.add_log("ERROR", f"发送失败 ID {msg_id}: {e}")
                 await asyncio.sleep(safe_delay)
 
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        await db.add_log("ERROR", f"同步中断: {e}")
+    except asyncio.CancelledError: pass
+    except Exception as e: await db.add_log("ERROR", f"同步中断: {e}")
     finally:
         sync_state["is_syncing"] = False
         if sync_state["stop_requested"]: await db.add_log("WARNING", "⏹ 任务已被手动终止！")
