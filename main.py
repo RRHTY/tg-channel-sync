@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramRetryAfter
-from pyrogram.errors import FloodWait as PyroFloodWait, BadRequest as PyroBadRequest
+from pyrogram.errors import FloodWait as PyroFloodWait
 from pyrogram.enums import ParseMode
 from dotenv import load_dotenv
 
@@ -18,13 +18,15 @@ import bot_engine
 
 load_dotenv()
 PORT = int(os.getenv("PORT", 8011))
-MAX_FAILS = int(os.getenv("MAX_FAILS", 10))
 
 app_info_cache = {"bot": {"name": "", "username": ""}, "user": {"name": "", "status": "未配置"}}
+
 sync_state = {
     "is_syncing": False, "mode": "", "total": 0, "current": 0,
     "current_text": "", "current_link": "", "skipped": 0,
-    "stop_requested": False
+    "stop_requested": False,
+    "source_id_raw": "", "target_id_raw": "", "delay": 5,
+    "start_id": "", "end_id": "", "json_path": ""
 }
 
 @asynccontextmanager
@@ -145,8 +147,8 @@ async def start_sync(
 ):
     if sync_state["is_syncing"]: return {"status": "error", "message": "任务运行中！"}
     
-    if mode in ["api", "blind"] and not bot_engine.pyro_user_app:
-        asyncio.create_task(db.add_log("ERROR", "❌ 操作受限：API/盲猜模式必须配置 API 账号。"))
+    if mode == "api" and not bot_engine.pyro_user_app:
+        asyncio.create_task(db.add_log("ERROR", "❌ 操作受限：API模式必须配置 API 账号。"))
         return {"status": "error", "message": "API信息未配置"}
         
     if mode == "json" and not os.path.exists(json_path): return {"status": "error", "message": "找不到 JSON 文件！"}
@@ -178,7 +180,13 @@ def parse_tg_json_text(text_list):
 async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str, delay: float, start_id: int, end_id: int, json_path: str):
     global sync_state
     safe_delay = max(0.5, float(delay))
-    sync_state.update({"is_syncing": True, "mode": mode.upper(), "current": 0, "skipped": 0, "total": 0, "stop_requested": False})
+    
+    sync_state.update({
+        "is_syncing": True, "mode": mode.upper(), 
+        "source_id_raw": source_id_raw, "target_id_raw": target_id_raw,
+        "delay": safe_delay, "start_id": start_id, "end_id": end_id, "json_path": json_path,
+        "current": 0, "skipped": 0, "total": 0, "stop_requested": False
+    })
 
     try:
         source_id = await resolve_chat_id(source_id_raw)
@@ -197,9 +205,11 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                     end_id = msg.id
             if not end_id: end_id = 1
             
+            sync_state["start_id"] = start_id
+            sync_state["end_id"] = end_id
             sync_state["total"] = end_id - start_id + 1
-            chunk_size = 100
             
+            chunk_size = 100
             await db.add_log("INFO", f"🚀 [API模式] 开始拉取 ID: {start_id} 到 {end_id} (使用辅助账号)")
             
             for chunk_start in range(start_id, end_id + 1, chunk_size):
@@ -263,7 +273,6 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                         await asyncio.sleep(safe_delay)
                     
                     else:
-                        # ===== 媒体组处理分支 =====
                         all_skipped = True
                         should_skip_group = False
                         
@@ -297,7 +306,6 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                                 await db.add_log("WARNING", f"⚠️ 触发风控，等待 {e.value} 秒重试...")
                                 await asyncio.sleep(e.value)
                             except TypeError as e:
-                                # 核心修复：识破 Pyrofork 库解析 Bug
                                 if "topics" in str(e) or "Messages.__init__" in str(e):
                                     await db.add_log("SUCCESS", f"✅ [Bug规避] 媒体组实际已发送成功 IDs {msg_ids}")
                                     for m in group:
@@ -313,7 +321,7 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                         if not success and not sync_state["stop_requested"]:
                             await db.add_log("WARNING", f"🔄 启动安全降级：将这 {len(msg_ids)} 张图拆散为单条逐个发送")
                             for m in group:
-                                if sync_state["stop_requested"]: break # 修复：降级过程中允许即时打断
+                                if sync_state["stop_requested"]: break 
                                 try:
                                     copied = await app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.id)
                                     await record_success(source_id, m.id, copied.id)
@@ -324,34 +332,6 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                                     await db.add_log("ERROR", f"❌ 降级单条发送失败 ID {m.id}: {ex}")
                         elif success and not sync_state["stop_requested"]:
                             await asyncio.sleep(safe_delay)
-
-        elif mode == "blind":
-            app = bot_engine.pyro_user_app
-            if start_id == 0 or end_id == 0: raise ValueError("必须填写起止ID！")
-            sync_state["total"] = end_id - start_id + 1
-            consecutive_fails = 0
-            
-            for msg_id in range(start_id, end_id + 1):
-                if sync_state["stop_requested"]: break
-                if await update_state_and_check_skip(source_id, msg_id, "盲猜尝试中..."): 
-                    consecutive_fails = 0; continue
-                try:
-                    copied = await app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg_id)
-                    await record_success(source_id, msg_id, copied.id)
-                    sync_state["current_text"] = "✅ 同步成功"
-                    consecutive_fails = 0
-                except PyroFloodWait as e:
-                    await handle_floodwait(e.value)
-                except PyroBadRequest:
-                    sync_state["current_text"] = "❌ 消息不存在"
-                    consecutive_fails += 1
-                    if consecutive_fails >= MAX_FAILS:
-                        await db.add_log("ERROR", f"🛑 触发熔断！连续 {MAX_FAILS} 次失败，任务强制终止！")
-                        sync_state["stop_requested"] = True
-                        break
-                except Exception as e:
-                    pass
-                await asyncio.sleep(safe_delay)
 
         elif mode == "json":
             bot = bot_engine.aiogram_bot
