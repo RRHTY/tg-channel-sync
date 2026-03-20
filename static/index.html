@@ -27,7 +27,7 @@
                     👤 {{ appInfo.user.name }}
                 </span>
                 <span v-else class="text-sm font-normal text-gray-400 flex items-center bg-gray-100 px-2 py-1 rounded">
-                    🚫 API 账号未配置 (运行于纯 Bot 模式)
+                    🚫 API 账号未配置 (仅可使用 JSON 导入)
                 </span>
             </div>
         </div>
@@ -43,10 +43,10 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div>
             <div class="card">
-                <h2 class="text-lg font-semibold mb-4 border-b pb-2">基础频道映射</h2>
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">基础频道映射 <span class="text-xs font-normal text-blue-500 ml-2">💡 支持填链接或 @名</span></h2>
                 <div class="space-y-3">
-                    <input v-model="newMap.source_id" type="text" placeholder="源频道 ID (例如: -100123...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
-                    <input v-model="newMap.target_id" type="text" placeholder="目标频道 ID (例如: -100987...)" class="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500">
+                    <input v-model="newMap.source_id" type="text" placeholder="源频道: -100 ID / 频道链接 / @频道名" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    <input v-model="newMap.target_id" type="text" placeholder="目标频道: -100 ID / 频道链接 / @频道名" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
                     <button @click="addMapping" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">保存规则</button>
                 </div>
                 <ul class="mt-4 space-y-2 text-sm">
@@ -109,28 +109,29 @@
             </div>
 
             <div class="space-y-4" :class="{'opacity-50 pointer-events-none': (syncStatus.is_syncing || isStopping)}">
+                
                 <div class="flex gap-2">
-                    <input v-model="syncForm.source_id" type="text" placeholder="对应源频道 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
-                    <input v-model="syncForm.target_id" type="text" placeholder="对应目标频道 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                    <input v-model="syncForm.source_id" type="text" placeholder="源频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    <input v-model="syncForm.target_id" type="text" placeholder="目标频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
                 </div>
 
                 <div class="flex bg-white rounded-lg border border-gray-200 p-1">
-                    <button @click="syncForm.mode = 'json'; blindConfirm = false" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">纯Bot: JSON 导入</button>
-                    <button @click="syncForm.mode = 'blind'; blindConfirm = false" :class="syncForm.mode === 'blind' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">纯Bot: ID 盲猜</button>
-                    <button @click="syncForm.mode = 'api'; blindConfirm = false" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">账号: API 拉取</button>
+                    <button @click="syncForm.mode = 'json'; blindConfirm = false" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">JSON 导入</button>
+                    <button @click="syncForm.mode = 'blind'; blindConfirm = false" :class="syncForm.mode === 'blind' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">ID 盲猜</button>
+                    <button @click="syncForm.mode = 'api'; blindConfirm = false" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 拉取</button>
                 </div>
 
                 <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">💡 JSON 模式说明：</p>
-                    <p>纯Bot即可运行。机器人读取官方导出的本地JSON直接发送，极度稳定。<b>(支持应用所有过滤规则)</b></p>
+                    <p>机器人读取官方导出的本地JSON直接发送，极度稳定。<b>(支持应用所有过滤规则)</b></p>
                 </div>
                 <div v-if="syncForm.mode === 'blind'" class="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">⚠️ 盲猜风险警告：</p>
-                    <p>纯Bot即可运行。暴力尝试ID极易被封禁。<b>注意：因无法提前预知内容，盲猜模式无法应用正则过滤规则。</b></p>
+                    <p>通过辅助账号暴力尝试历史ID极易被封禁。<b>(无法应用正则过滤规则)</b></p>
                 </div>
                 <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
                     <p class="font-bold mb-1">🔑 API 拉取说明：</p>
-                    <p>需在后台环境配置 API_ID 并验证手机号。真实用户身份秒拉历史列表后转发。<b>(完美支持所有过滤规则)</b></p>
+                    <p>直接利用辅助账号的真实用户身份拉取列表并转发消息，无惧私密频道权限隔离。<b>(支持所有过滤规则)</b></p>
                 </div>
 
                 <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
