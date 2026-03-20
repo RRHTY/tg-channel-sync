@@ -23,52 +23,103 @@ if not BOT_TOKEN:
 aiogram_bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# 媒体组缓冲池
+media_group_cache = {}
+
 @dp.channel_post()
 async def handle_new_post(message: Message):
     source_id = message.chat.id
     target_id = await db.get_target_channel(source_id)
     if not target_id: return
 
-    # --- 启动正则过滤系统 ---
-    has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'animation']
-    file_name = ""
-    if message.document: file_name = message.document.file_name or ""
-    elif message.video: file_name = message.video.file_name or ""
-    elif message.audio: file_name = message.audio.file_name or ""
+    # ================= 1. 媒体组 (Album) 打包处理逻辑 =================
+    if message.media_group_id:
+        mg_id = message.media_group_id
+        if mg_id not in media_group_cache:
+            media_group_cache[mg_id] = [message]
+            await asyncio.sleep(2)  # 缓冲 2 秒，等待同组的其他图片/视频到达
+            
+            if mg_id in media_group_cache:
+                group = media_group_cache.pop(mg_id)
+                group.sort(key=lambda m: m.message_id) 
+                
+                should_skip_group = False
+                for m in group:
+                    text_html = m.html_text if m.text or m.caption else ""
+                    file_name = m.document.file_name if m.document else (m.video.file_name if m.video else "")
+                    should_skip, _ = await db.apply_message_filters(text_html, True, file_name or "")
+                    if should_skip:
+                        should_skip_group = True
+                        break
+                
+                if should_skip_group:
+                    await db.add_log("INFO", f"⏭️ [过滤拦截] 实时媒体组命中屏蔽规则，整组丢弃 ID: {[m.message_id for m in group]}")
+                    return
 
+                msg_ids = [m.message_id for m in group]
+                success = False
+                
+                # 尝试批量转发相册
+                for attempt in range(3):
+                    try:
+                        copied_ids = await aiogram_bot.copy_messages(chat_id=target_id, from_chat_id=source_id, message_ids=msg_ids)
+                        for orig_m, new_m in zip(group, copied_ids):
+                            await db.save_msg_mapping(source_id, orig_m.message_id, new_m.message_id)
+                        await db.add_log("SUCCESS", f"[实时同步] 媒体组成功: {source_id} -> {target_id} (共 {len(msg_ids)} 项)")
+                        success = True
+                        break
+                    except TelegramRetryAfter as e:
+                        await db.add_log("WARNING", f"⚠️ [实时同步] 触发风控，等待 {e.retry_after} 秒重试")
+                        await asyncio.sleep(e.retry_after)
+                    except Exception as e:
+                        await db.add_log("ERROR", f"❌ [实时同步] 媒体组批量转发失败 IDs {msg_ids}: {e}")
+                        break # 跳出重试，执行单条降级
+                        
+                # 安全降级方案
+                if not success:
+                    await db.add_log("WARNING", f"🔄 [实时降级] 媒体组批量失败，降级为逐个单条发送: {msg_ids}")
+                    for m in group:
+                        try:
+                            copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.message_id)
+                            await db.save_msg_mapping(source_id, m.message_id, copied.message_id)
+                            await asyncio.sleep(1) # 单条发送加1秒缓冲
+                        except Exception as ex:
+                            await db.add_log("ERROR", f"❌ [实时降级] 单条失败 ID {m.message_id}: {ex}")
+        else:
+            media_group_cache[mg_id].append(message)
+        return
+
+    # ================= 2. 普通单条消息处理逻辑 =================
+    has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'animation']
+    file_name = message.document.file_name if message.document else (message.video.file_name if message.video else "")
     text_html = message.html_text if message.text or message.caption else ""
-    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
+    
+    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
     
     if should_skip:
-        await db.add_log("INFO", f"[过滤拦截] 触发媒体跳过规则，已丢弃消息 ID {message.message_id}")
+        await db.add_log("INFO", f"⏭️ [过滤拦截] 触发跳过规则，已丢弃单条消息 ID {message.message_id}")
         return
 
-    # 若正则把纯文本全删光了，直接不发
     if not has_media and not new_html.strip():
-        await db.add_log("INFO", f"[过滤拦截] 纯文本替换后为空，已丢弃消息 ID {message.message_id}")
         return
 
-    max_retries = 3
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
             if new_html != text_html:
-                # 文本被正则修改过，使用发送模式(保留HTML富文本格式)
                 if not has_media:
                     copied = await aiogram_bot.send_message(target_id, text=new_html, parse_mode="HTML")
                 else:
                     copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id, caption=new_html, parse_mode="HTML")
             else:
-                # 文本未变，完美硬拷贝
                 copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
             
             await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
             await db.add_log("SUCCESS", f"[实时同步] 成功: {source_id} -> {target_id}")
             break
         except TelegramRetryAfter as e:
-            await db.add_log("WARNING", f"[实时同步] 触发风控，等待 {e.retry_after} 秒后重试 (第 {attempt+1} 次)")
             await asyncio.sleep(e.retry_after)
         except Exception as e:
-            await db.add_log("ERROR", f"[实时同步] 失败 ID {message.message_id}: {e}")
+            await db.add_log("ERROR", f"❌ [实时同步] 失败 ID {message.message_id}: {e}")
             break
 
 @dp.edited_channel_post()
@@ -80,12 +131,11 @@ async def handle_edited_post(message: Message):
     target_msg_id = await db.get_target_msg_id(source_id, message.message_id)
     if not target_msg_id: return
 
-    # 修改动作同样受制于文本替换
     text_html = message.html_text if message.text or message.caption else ""
     has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'animation']
     should_skip, new_html = await db.apply_message_filters(text_html, has_media, "")
     
-    if should_skip: return # 如果被修改的内容触发了屏蔽词，不再进行修改
+    if should_skip: return 
 
     try:
         if message.text:

@@ -173,62 +173,147 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
             
             sync_state["total"] = end_id - start_id + 1
             chunk_size = 100
+            
+            await db.add_log("INFO", f"🚀 [API模式] 计算完成，总计划拉取范围 ID: {start_id} 到 {end_id}")
+            
             for chunk_start in range(start_id, end_id + 1, chunk_size):
                 if sync_state["stop_requested"]: break
                 chunk_end = min(chunk_start + chunk_size - 1, end_id)
                 ids_to_fetch = list(range(chunk_start, chunk_end + 1))
                 
+                await db.add_log("INFO", f"📡 正在向官方拉取该批次历史 ID: {chunk_start} 到 {chunk_end} ...")
+                
                 try:
                     msgs = await bot_engine.pyro_user_app.get_messages(source_id, ids_to_fetch)
                 except Exception as e:
-                    await db.add_log("ERROR", f"批量获取历史失败: {e}")
+                    await db.add_log("ERROR", f"❌ 批量获取历史失败: {e}")
                     continue
                 
+                grouped_msgs = []
+                current_group = []
+                valid_count = 0
                 for msg in msgs:
-                    if sync_state["stop_requested"]: break
                     if msg is None or msg.empty: continue
-                    
-                    # 提取参数喂给过滤引擎
-                    has_media = msg.media is not None
-                    file_name = ""
-                    if msg.document: file_name = msg.document.file_name or ""
-                    elif msg.video: file_name = msg.video.file_name or ""
-                    elif msg.audio: file_name = msg.audio.file_name or ""
-                    
-                    try:
-                        text_html = msg.text.html if msg.text else (msg.caption.html if msg.caption else "")
-                    except Exception:
-                        text_html = msg.text or msg.caption or ""
-
-                    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
-                    if should_skip:
-                        await db.add_log("INFO", f"[过滤跳过] API 拉取命中跳过规则，忽略消息 ID {msg.id}")
-                        continue
-                    if not has_media and not new_html.strip():
-                        continue # 全被删空了不发
-
-                    if await update_state_and_check_skip(source_id, msg.id, new_html[:50] or "[媒体]"): continue
-                    
-                    try:
-                        if new_html != text_html:
-                            if not has_media: copied = await bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML")
-                            else: copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id, caption=new_html, parse_mode="HTML")
+                    valid_count += 1
+                    if msg.media_group_id:
+                        if not current_group:
+                            current_group.append(msg)
+                        elif current_group[0].media_group_id == msg.media_group_id:
+                            current_group.append(msg)
                         else:
-                            copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
+                            grouped_msgs.append(current_group)
+                            current_group = [msg]
+                    else:
+                        if current_group:
+                            grouped_msgs.append(current_group)
+                            current_group = []
+                        grouped_msgs.append([msg])
+                if current_group:
+                    grouped_msgs.append(current_group)
+                
+                await db.add_log("INFO", f"📦 本批次共 {valid_count} 条有效消息，已智能划分为 {len(grouped_msgs)} 个处理组 (单条/媒体组)")
+
+                for group in grouped_msgs:
+                    if sync_state["stop_requested"]: break
+                    
+                    # --- 单条消息处理 ---
+                    if len(group) == 1:
+                        msg = group[0]
+                        has_media = msg.media is not None
+                        file_name = msg.document.file_name if msg.document else (msg.video.file_name if msg.video else "")
                         
-                        await record_success(source_id, msg.id, copied.message_id)
-                    except TelegramRetryAfter as e:
-                        await handle_floodwait(e.retry_after)
-                    except Exception as e:
-                        await db.add_log("ERROR", f"API同步失败 ID {msg.id}: {e}")
-                    await asyncio.sleep(safe_delay)
+                        try:
+                            text_html = msg.text.html if msg.text else (msg.caption.html if msg.caption else "")
+                        except: text_html = msg.text or msg.caption or ""
+
+                        should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
+                        if should_skip:
+                            await db.add_log("INFO", f"⏭️ [跳过] 规则拦截了消息 ID: {msg.id}")
+                            continue
+                        if not has_media and not new_html.strip(): continue 
+
+                        if await update_state_and_check_skip(source_id, msg.id, new_html[:50] or "[单条媒体]"): continue
+                        
+                        try:
+                            if new_html != text_html:
+                                if not has_media: copied = await bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML")
+                                else: copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id, caption=new_html, parse_mode="HTML")
+                            else:
+                                copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
+                            
+                            await record_success(source_id, msg.id, copied.message_id)
+                        except TelegramRetryAfter as e:
+                            await handle_floodwait(e.retry_after)
+                        except Exception as e:
+                            await db.add_log("ERROR", f"❌ API单条同步失败 ID {msg.id}: {e}")
+                        
+                        await asyncio.sleep(safe_delay)
+                    
+                    # --- 媒体组 (Album) 处理 ---
+                    else:
+                        all_skipped = True
+                        should_skip_group = False
+                        
+                        for m in group:
+                            try: t_html = m.text.html if m.text else (m.caption.html if m.caption else "")
+                            except: t_html = m.text or m.caption or ""
+                            f_name = m.document.file_name if m.document else (m.video.file_name if m.video else "")
+                                
+                            s_skip, _ = await db.apply_message_filters(t_html, True, f_name or "")
+                            if s_skip:
+                                should_skip_group = True
+                                break 
+                                
+                            sync_state["current"] += 1
+                            sync_state["current_link"] = f"t.me/c/{str(source_id).replace('-100', '')}/{m.id}"
+                            sync_state["current_text"] = f"[打包同步媒体组: {len(group)}张]"
+                            if not await db.is_message_synced(source_id, m.id): all_skipped = False
+                            else: sync_state["skipped"] += 1
+                                
+                        msg_ids = [m.id for m in group]
+                        
+                        if should_skip_group:
+                            await db.add_log("INFO", f"⏭️ [跳过] 媒体组命中屏蔽规则，整组拦截 IDs: {msg_ids}")
+                            continue
+                        if all_skipped: continue
+                            
+                        await db.add_log("INFO", f"▶️ 正在作为一个相册批量发送，包含 {len(msg_ids)} 项，IDs: {msg_ids}")
+                        
+                        # 核心机制：尝试批量发送，如果失败则安全降级
+                        success = False
+                        for attempt in range(3):
+                            try:
+                                copied_msgs = await bot.copy_messages(chat_id=target_id, from_chat_id=source_id, message_ids=msg_ids)
+                                for orig_m, new_m in zip(group, copied_msgs):
+                                    await record_success(source_id, orig_m.id, new_m.message_id)
+                                success = True
+                                break
+                            except TelegramRetryAfter as e:
+                                await db.add_log("WARNING", f"⚠️ 触发风控，等待 {e.retry_after} 秒重试...")
+                                await asyncio.sleep(e.retry_after)
+                            except Exception as e:
+                                await db.add_log("ERROR", f"❌ 批量相册转发失败 IDs {msg_ids}: {e}")
+                                break # 跳出循环执行单条降级
+                        
+                        # 如果相册打包失败，自动降级为单张图片逐个发送！绝不漏图！
+                        if not success:
+                            await db.add_log("WARNING", f"🔄 启动安全降级：将这 {len(msg_ids)} 张图拆散为单条逐个发送")
+                            for m in group:
+                                try:
+                                    copied = await bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.id)
+                                    await record_success(source_id, m.id, copied.message_id)
+                                    await asyncio.sleep(safe_delay) # 拆散发送时严格休眠
+                                except Exception as ex:
+                                    await db.add_log("ERROR", f"❌ 降级单条发送也失败 ID {m.id}: {ex}")
+                        else:
+                            # 批量打包成功的话，整组发送完才需要延时 1 次
+                            await asyncio.sleep(safe_delay)
 
         elif mode == "blind":
             if start_id == 0 or end_id == 0: raise ValueError("必须填写起止ID！")
             sync_state["total"] = end_id - start_id + 1
             consecutive_fails = 0
             
-            # 盲猜模式提醒
             rules = await db.get_all_filter_rules()
             if rules: await db.add_log("WARNING", "⚠️ 盲猜模式无法提前读取内容，已自动忽略正则过滤规则！")
             
@@ -269,7 +354,7 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                 
                 should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
                 if should_skip:
-                    await db.add_log("INFO", f"[过滤跳过] JSON 命中跳过规则，忽略消息 ID {msg_id}")
+                    await db.add_log("INFO", f"⏭️ [过滤跳过] JSON 命中跳过规则，忽略消息 ID {msg_id}")
                     continue
                 if not has_media and not new_html.strip():
                     continue 
@@ -292,7 +377,7 @@ async def process_master_sync(mode: str, source_id: int, target_id: int, delay: 
                 except TelegramRetryAfter as e:
                     await handle_floodwait(e.retry_after)
                 except Exception as e:
-                    await db.add_log("ERROR", f"发送失败 ID {msg_id}: {e}")
+                    await db.add_log("ERROR", f"❌ 发送失败 ID {msg_id}: {e}")
                 await asyncio.sleep(safe_delay)
 
     except asyncio.CancelledError: pass
