@@ -30,16 +30,47 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # ================= 新增：正则过滤规则表 =================
         await db.execute("""
             CREATE TABLE IF NOT EXISTS filter_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 rule_type TEXT NOT NULL,
                 pattern TEXT NOT NULL,
-                replacement TEXT
+                replacement TEXT,
+                is_case_sensitive INTEGER DEFAULT 0
             )
         """)
+        # 新增：消息流水独立日志表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS message_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # 新增：全局设置表（存储类型开关）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS global_settings (
+                setting_key TEXT PRIMARY KEY,
+                setting_value TEXT NOT NULL
+            )
+        """)
+        
+        try:
+            await db.execute("ALTER TABLE filter_rules ADD COLUMN is_case_sensitive INTEGER DEFAULT 0")
+        except Exception: pass
+            
         await db.execute("CREATE INDEX IF NOT EXISTS idx_source_msg ON message_mappings(source_channel_id, source_msg_id)")
+        await db.commit()
+
+        # 初始化默认消息类型全开
+        default_settings = {
+            "sync_text": "1", "sync_photo": "1", "sync_video": "1", 
+            "sync_document": "1", "sync_sticker": "1", "sync_gif": "1",
+            "sync_audio": "1", "sync_voice": "1"
+        }
+        for k, v in default_settings.items():
+            await db.execute("INSERT OR IGNORE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, v))
         await db.commit()
 
 async def add_channel_mapping(source_id: int, target_id: int):
@@ -87,24 +118,48 @@ async def add_log(level: str, message: str):
 
 async def get_recent_logs(limit: int = 200) -> list:
     async with aiosqlite.connect(DB_FILE) as db:
-        cursor = await db.execute("""
-            SELECT datetime(created_at, 'localtime'), level, message 
-            FROM system_logs 
-            WHERE created_at >= datetime('now', '-1 day') 
-            ORDER BY created_at DESC LIMIT ?
-        """, (limit,))
+        cursor = await db.execute("SELECT datetime(created_at, 'localtime'), level, message FROM system_logs ORDER BY created_at DESC LIMIT ?", (limit,))
         return await cursor.fetchall()
 
-# ================= 新增：过滤规则数据库操作与核心正则算法 =================
-async def add_filter_rule(rule_type: str, pattern: str, replacement: str = ""):
+# --- 消息流水日志 ---
+async def add_msg_log(action: str, detail: str):
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("INSERT INTO filter_rules (rule_type, pattern, replacement) VALUES (?, ?, ?)", (rule_type, pattern, replacement))
+        await db.execute("INSERT INTO message_logs (action, detail) VALUES (?, ?)", (action, detail))
+        await db.commit()
+
+async def get_recent_msg_logs(limit: int = 200) -> list:
+    async with aiosqlite.connect(DB_FILE) as db:
+        cursor = await db.execute("SELECT datetime(created_at, 'localtime'), action, detail FROM message_logs ORDER BY created_at DESC LIMIT ?", (limit,))
+        return await cursor.fetchall()
+
+# --- 全局设置存取 ---
+async def get_all_settings() -> dict:
+    async with aiosqlite.connect(DB_FILE) as db:
+        cursor = await db.execute("SELECT setting_key, setting_value FROM global_settings")
+        rows = await cursor.fetchall()
+        return {k: v for k, v in rows}
+
+async def update_settings(settings: dict):
+    async with aiosqlite.connect(DB_FILE) as db:
+        for k, v in settings.items():
+            await db.execute("INSERT OR REPLACE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, str(v)))
+        await db.commit()
+
+# --- 正则与类型核心算法 ---
+async def add_filter_rule(rule_type: str, pattern: str, replacement: str = "", is_case_sensitive: int = 0):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("INSERT INTO filter_rules (rule_type, pattern, replacement, is_case_sensitive) VALUES (?, ?, ?, ?)", 
+                         (rule_type, pattern, replacement, is_case_sensitive))
         await db.commit()
 
 async def get_all_filter_rules() -> list:
     async with aiosqlite.connect(DB_FILE) as db:
-        cursor = await db.execute("SELECT id, rule_type, pattern, replacement FROM filter_rules")
-        return await cursor.fetchall()
+        try:
+            cursor = await db.execute("SELECT id, rule_type, pattern, replacement, is_case_sensitive FROM filter_rules")
+            return await cursor.fetchall()
+        except Exception:
+            cursor = await db.execute("SELECT id, rule_type, pattern, replacement FROM filter_rules")
+            return [(r[0], r[1], r[2], r[3], 0) for r in await cursor.fetchall()]
 
 async def delete_filter_rule(rule_id: int):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -112,25 +167,20 @@ async def delete_filter_rule(rule_id: int):
         await db.commit()
 
 async def apply_message_filters(text_html: str, has_media: bool, file_name: str) -> tuple[bool, str]:
-    """全局过滤引擎：根据正则规则判定是否跳过，并返回处理后的 HTML 文本"""
     rules = await get_all_filter_rules()
     should_skip = False
     new_text = text_html or ""
 
     for r in rules:
-        r_id, r_type, pattern, replacement = r
+        r_id, r_type, pattern, replacement, is_case_sensitive = r
+        flags = 0 if is_case_sensitive else re.IGNORECASE
         try:
-            regex = re.compile(pattern, re.IGNORECASE)
-            if r_type == 'skip_media' and has_media:
-                # 媒体跳过规则：如果文本内容或文件名命中了正则，整条消息直接屏蔽
+            regex = re.compile(pattern, flags)
+            if r_type in ['drop', 'skip_media']:
                 if regex.search(new_text) or (file_name and regex.search(file_name)):
-                    should_skip = True
-                    break
-            elif r_type == 'replace_text':
-                # 文本替换规则：执行正则替换
-                if new_text:
-                    new_text = regex.sub(replacement or "", new_text)
-        except re.error:
-            continue # 遇到用户填写的错误正则时忽略，防止系统崩溃
+                    should_skip = True; break 
+            elif r_type in ['replace', 'replace_text']:
+                if new_text: new_text = regex.sub(replacement or "", new_text)
+        except re.error: continue
 
     return should_skip, new_text

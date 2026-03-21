@@ -33,7 +33,13 @@
         </div>
         <div class="flex items-center gap-4">
             <div v-if="message" class="bg-green-100 text-green-800 px-4 py-1.5 rounded shadow-sm text-sm">{{ message }}</div>
-            <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="text-gray-500 hover:text-gray-900 flex items-center gap-1.5 transition">
+            
+            <div class="flex items-center gap-2 border-l border-gray-300 pl-4">
+                <button @click="restartServer" class="text-xs bg-gray-200 text-gray-700 px-2 py-1.5 rounded hover:bg-gray-300 transition font-medium">🔄 重启服务</button>
+                <button @click="stopServer" class="text-xs bg-red-100 text-red-700 px-2 py-1.5 rounded hover:bg-red-200 transition font-medium">🛑 强制关闭</button>
+            </div>
+
+            <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="text-gray-500 hover:text-gray-900 flex items-center gap-1.5 transition ml-2">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path></svg>
                 <span class="text-sm font-medium">GitHub</span>
             </a>
@@ -41,6 +47,7 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
         <div>
             <div class="card">
                 <h2 class="text-lg font-semibold mb-4 border-b pb-2">基础频道映射 <span class="text-xs font-normal text-blue-500 ml-2">💡 支持填链接或 @名</span></h2>
@@ -62,120 +69,175 @@
                 </ul>
             </div>
 
-            <div class="card">
-                <h2 class="text-lg font-semibold mb-4 border-b pb-2">高级内容过滤 (正则)</h2>
-                <div class="space-y-3 mb-4">
-                    <select v-model="newFilter.rule_type" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500 bg-white">
-                        <option value="replace_text">文本匹配：替换 / 屏蔽</option>
-                        <option value="skip_media">媒体匹配：跳过该图片/视频</option>
-                    </select>
-                    <input v-model="newFilter.pattern" type="text" placeholder="正则表达式 (例如: 广告.*直达 或 \.mp4)" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
-                    <input v-if="newFilter.rule_type === 'replace_text'" v-model="newFilter.replacement" type="text" placeholder="替换为的内容 (留空则彻底删除匹配的字词)" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
-                    <button @click="addFilter" class="w-full bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">添加过滤规则</button>
+            <div class="card bg-blue-50/50">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-blue-200">历史数据全能同步</h2>
+
+                <div v-if="syncStatus.is_syncing" class="mb-6 p-4 bg-white border border-blue-100 rounded shadow-sm">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="font-medium text-blue-700">正在运行: {{ syncStatus.mode }}</span>
+                        <span class="text-gray-500">{{ syncStatus.current }} / {{ syncStatus.total }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
+                        <div class="bg-blue-600 h-2 rounded-full transition-all duration-500" :style="{ width: (syncStatus.total > 0 ? syncStatus.current / syncStatus.total * 100 : 0) + '%' }"></div>
+                    </div>
+                    <div class="text-xs text-gray-500 space-y-1">
+                        <p>📢 <b>跳过已发 (断点续传):</b> {{ syncStatus.skipped }} 条</p>
+                        <p>🔗 <b>当前操作:</b> <a :href="'https://' + syncStatus.current_link" target="_blank" class="text-blue-500 underline">{{ syncStatus.current_link }}</a></p>
+                        <p class="truncate">💬 <b>状态:</b> {{ syncStatus.current_text }}</p>
+                    </div>
                 </div>
-                <ul class="space-y-2 text-sm">
-                    <li v-for="rule in filterRules" :key="rule.id" class="flex justify-between items-center p-2 bg-gray-50 rounded group">
-                        <div class="flex-1 px-2 overflow-hidden flex items-center">
-                            <span class="text-xs font-bold px-1.5 py-0.5 rounded mr-2 whitespace-nowrap" :class="rule.rule_type === 'replace_text' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'">
-                                {{ rule.rule_type === 'replace_text' ? '替换' : '屏蔽' }}
-                            </span>
-                            <span class="font-mono text-gray-800 truncate" :title="rule.pattern">{{ rule.pattern }}</span>
-                            <span v-if="rule.rule_type === 'replace_text'" class="text-gray-400 mx-1">→</span>
-                            <span v-if="rule.rule_type === 'replace_text'" class="text-green-600 font-mono truncate">{{ rule.replacement === '' ? '(删除)' : rule.replacement }}</span>
+
+                <div class="space-y-4" :class="{'opacity-50 pointer-events-none': (syncStatus.is_syncing || isStopping)}">
+                    
+                    <div class="flex gap-2">
+                        <input v-model="syncForm.source_id" type="text" placeholder="源频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                        <input v-model="syncForm.target_id" type="text" placeholder="目标频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    </div>
+
+                    <div class="flex bg-white rounded-lg border border-gray-200 p-1">
+                        <button @click="syncForm.mode = 'json'" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">JSON 导入</button>
+                        <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 拉取</button>
+                    </div>
+
+                    <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
+                        <p class="font-bold mb-1">💡 JSON 模式说明：</p>
+                        <p>读取官方导出的本地JSON直接发送，极度稳定。<b>(已自动应用右侧全局过滤设置)</b></p>
+                    </div>
+                    <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
+                        <p class="font-bold mb-1">🔑 API 拉取说明：</p>
+                        <p>利用辅助账号无视私密频道权限秒拉历史。<b>(已自动应用右侧全局过滤设置)</b></p>
+                    </div>
+
+                    <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                        <label class="block text-xs font-medium text-gray-700 mb-1">本地 JSON 文件绝对路径</label>
+                        <input v-model="syncForm.json_path" type="text" placeholder="例如: D:\TG_Export\result.json" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
+                    </div>
+
+                    <div v-if="syncForm.mode === 'api'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                        <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span class="text-gray-400">(不填则拉取全部)</span></label>
+                        <div class="flex gap-2">
+                            <input v-model="syncForm.start_id" type="number" placeholder="起始 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                            <input v-model="syncForm.end_id" type="number" placeholder="结束 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
                         </div>
-                        <button @click="deleteFilter(rule.id)" class="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition px-2">删除</button>
-                    </li>
-                    <li v-if="filterRules.length === 0" class="text-gray-400 text-center py-2">无激活的过滤规则</li>
-                </ul>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">单条处理延时 (秒): </label>
+                        <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="自由输入，最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition shadow">
+                        🚀 启动 {{ syncForm.mode.toUpperCase() }} 同步任务
+                    </button>
+                    <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition shadow">⏹ 停止 / 暂停当前任务</button>
+
+                    <div v-if="isStopping" class="w-full bg-orange-50 border border-orange-200 rounded p-3 text-center shadow-inner">
+                        <p class="text-sm text-orange-600 font-semibold mb-2">正在安全退出并保存断点，请稍候...</p>
+                        <div class="w-full bg-orange-200 rounded-full h-2">
+                            <div class="bg-orange-500 h-2 rounded-full transition-all duration-100 ease-linear" :style="{ width: stopProgress + '%' }"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="card bg-blue-50/50">
-            <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-blue-200">历史数据全能同步</h2>
-
-            <div v-if="syncStatus.is_syncing" class="mb-6 p-4 bg-white border border-blue-100 rounded shadow-sm">
-                <div class="flex justify-between text-sm mb-1">
-                    <span class="font-medium text-blue-700">正在运行: {{ syncStatus.mode }}</span>
-                    <span class="text-gray-500">{{ syncStatus.current }} / {{ syncStatus.total }}</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
-                    <div class="bg-blue-600 h-2 rounded-full transition-all duration-500" :style="{ width: (syncStatus.total > 0 ? syncStatus.current / syncStatus.total * 100 : 0) + '%' }"></div>
-                </div>
-                <div class="text-xs text-gray-500 space-y-1">
-                    <p>📢 <b>跳过已发 (断点续传):</b> {{ syncStatus.skipped }} 条</p>
-                    <p>🔗 <b>当前操作:</b> <a :href="'https://' + syncStatus.current_link" target="_blank" class="text-blue-500 underline">{{ syncStatus.current_link }}</a></p>
-                    <p class="truncate">💬 <b>状态:</b> {{ syncStatus.current_text }}</p>
-                </div>
-            </div>
-
-            <div class="space-y-4" :class="{'opacity-50 pointer-events-none': (syncStatus.is_syncing || isStopping)}">
+        <div>
+            <div class="card border-t-4 border-indigo-500 bg-gray-50/50">
+                <h2 class="text-lg font-semibold mb-5 flex items-center gap-2 border-b pb-3">
+                    <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
+                    全局过滤系统 
+                    <span class="text-[10px] font-normal text-indigo-600 ml-auto bg-indigo-100 px-2 py-0.5 rounded-full border border-indigo-200">实时监听 / 历史拉取 双端生效</span>
+                </h2>
                 
-                <div class="flex gap-2">
-                    <input v-model="syncForm.source_id" type="text" placeholder="源频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
-                    <input v-model="syncForm.target_id" type="text" placeholder="目标频道: -100 ID / @名" class="w-1/2 border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
-                </div>
-
-                <div class="flex bg-white rounded-lg border border-gray-200 p-1">
-                    <button @click="syncForm.mode = 'json'" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">JSON 导入</button>
-                    <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 拉取</button>
-                </div>
-
-                <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
-                    <p class="font-bold mb-1">💡 JSON 模式说明：</p>
-                    <p>机器人读取官方导出的本地JSON直接发送，极度稳定。<b>(支持应用所有过滤规则)</b></p>
-                </div>
-                <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
-                    <p class="font-bold mb-1">🔑 API 拉取说明：</p>
-                    <p>直接利用辅助账号的真实用户身份拉取列表并转发消息，无惧私密频道权限隔离。<b>(支持所有过滤规则)</b></p>
-                </div>
-
-                <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                    <label class="block text-xs font-medium text-gray-700 mb-1">本地 JSON 文件绝对路径</label>
-                    <input v-model="syncForm.json_path" type="text" placeholder="例如: D:\TG_Export\result.json" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
-                </div>
-
-                <div v-if="syncForm.mode === 'api'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                    <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span class="text-gray-400">(不填则拉取全部)</span></label>
-                    <div class="flex gap-2">
-                        <input v-model="syncForm.start_id" type="number" placeholder="起始 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
-                        <input v-model="syncForm.end_id" type="number" placeholder="结束 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
+                <div class="bg-white p-4 rounded-lg mb-6 border border-gray-200 shadow-sm">
+                    <h3 class="text-sm font-bold text-gray-800 mb-4 flex items-center gap-1.5">
+                        <span class="text-blue-500">✅</span> 允许同步的消息类型 <span class="text-xs font-normal text-gray-500 ml-1">(反选即丢弃，不拉取)</span>
+                    </h3>
+                    <div class="grid grid-cols-4 gap-y-4 gap-x-2 mb-5">
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_text" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 📝 文本</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_photo" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🖼️ 图片</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_video" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🎬 视频</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_document" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 📁 文件</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_audio" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🎵 音乐</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_voice" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🎤 语音</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_sticker" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🏷️ 贴纸</label>
+                        <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_gif" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 🎞️ 动图</label>
                     </div>
+                    <button @click="saveSettings" class="w-full bg-blue-500 text-white px-4 py-2.5 rounded-md hover:bg-blue-600 transition font-semibold shadow-sm flex justify-center items-center gap-1">
+                        💾 保存类型配置
+                    </button>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-medium text-gray-700 mb-1">单条处理延时 (秒): </label>
-                    <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="自由输入，最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
-                </div>
-            </div>
-
-            <div class="mt-4">
-                <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition shadow">
-                    🚀 启动 {{ syncForm.mode.toUpperCase() }} 同步任务
-                </button>
-                
-                <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition shadow">⏹ 停止 / 暂停当前任务</button>
-
-                <div v-if="isStopping" class="w-full bg-orange-50 border border-orange-200 rounded p-3 text-center shadow-inner">
-                    <p class="text-sm text-orange-600 font-semibold mb-2">正在安全退出并保存断点，请稍候...</p>
-                    <div class="w-full bg-orange-200 rounded-full h-2">
-                        <div class="bg-orange-500 h-2 rounded-full transition-all duration-100 ease-linear" :style="{ width: stopProgress + '%' }"></div>
+                <div class="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                    <h3 class="text-sm font-bold text-gray-800 mb-4 flex items-center gap-1.5">
+                        <span class="text-indigo-500">🛡️</span> 正则匹配规则配置
+                    </h3>
+                    <div class="space-y-3 mb-5">
+                        <select v-model="newFilter.rule_type" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-indigo-500 bg-white">
+                            <option value="replace">🎯 仅替换/删除匹配到的文本字词</option>
+                            <option value="drop">💣 屏蔽整条消息 (包含图片视频一并屏蔽)</option>
+                        </select>
+                        <input v-model="newFilter.pattern" type="text" placeholder="正则表达式 (如: 广告.*直达 或 \.mp4)" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-indigo-500">
+                        <input v-if="newFilter.rule_type === 'replace'" v-model="newFilter.replacement" type="text" placeholder="替换成的内容 (留空则代表仅删除匹配文字)" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-indigo-500">
+                        
+                        <label class="flex items-center text-sm cursor-pointer text-gray-700 mt-2">
+                            <input type="checkbox" v-model="newFilter.is_case_sensitive" :true-value="1" :false-value="0" class="mr-2 accent-indigo-600 w-4 h-4"> 
+                            区分英文字母大小写 (默认不区分)
+                        </label>
+                        <button @click="addFilter" class="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-md hover:bg-indigo-700 transition font-semibold shadow-sm flex justify-center items-center gap-1 mt-2">
+                            ➕ 添加正则规则
+                        </button>
                     </div>
+                    
+                    <ul class="space-y-2 text-sm border-t border-gray-100 pt-4">
+                        <li v-for="rule in filterRules" :key="rule.id" class="flex justify-between items-center p-2 bg-gray-50 rounded border border-gray-100 group">
+                            <div class="flex-1 px-2 overflow-hidden flex items-center">
+                                <span class="text-xs font-bold px-1.5 py-0.5 rounded mr-2 whitespace-nowrap" :class="rule.rule_type === 'replace' || rule.rule_type === 'replace_text' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'">
+                                    {{ rule.rule_type === 'replace' || rule.rule_type === 'replace_text' ? '替换' : '屏蔽' }}
+                                </span>
+                                <span v-if="rule.is_case_sensitive === 1" class="text-[10px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded mr-1 font-bold" title="区分大小写">Aa</span>
+                                <span class="font-mono text-gray-800 truncate" :title="rule.pattern">{{ rule.pattern }}</span>
+                                <span v-if="rule.rule_type === 'replace' || rule.rule_type === 'replace_text'" class="text-gray-400 mx-1">→</span>
+                                <span v-if="rule.rule_type === 'replace' || rule.rule_type === 'replace_text'" class="text-green-600 font-mono truncate">{{ rule.replacement === '' ? '(抹除文本)' : rule.replacement }}</span>
+                            </div>
+                            <button @click="deleteFilter(rule.id)" class="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition px-2 font-medium">删除</button>
+                        </li>
+                        <li v-if="filterRules.length === 0" class="text-gray-400 text-center py-2 text-xs">无激活的正则规则</li>
+                    </ul>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="card mt-2">
-        <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
-            <h2 class="text-sm font-semibold text-gray-600">系统运行日志 (实时监听)</h2>
-            <span class="text-xs text-gray-400">日志缓存在浏览器中，刷新页面即重置</span>
-        </div>
-        <div class="bg-slate-900 p-3 rounded h-64 overflow-y-auto log-container text-xs font-mono space-y-1">
-            <div v-for="(log, index) in sessionLogs" :key="index" class="border-b border-slate-800 pb-1"
-                 :class="{ 'text-red-400': log.level === 'ERROR', 'text-yellow-400': log.level === 'WARNING', 'text-green-400': log.level === 'SUCCESS', 'text-gray-300': log.level === 'INFO' }">
-                <span class="text-slate-500">[{{ log.time }}]</span> [{{ log.level }}] {{ log.msg }}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
+        <div class="card">
+            <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
+                <h2 class="text-sm font-semibold text-gray-600">🛠️ 系统运行日志</h2>
+                <span class="text-[10px] text-gray-400">显示任务启停与报错异常</span>
             </div>
-            <div v-if="sessionLogs.length === 0" class="text-slate-500 text-center mt-12">暂无新日志...</div>
+            <div class="bg-slate-900 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1">
+                <div v-for="(log, index) in sysLogs" :key="index" class="border-b border-slate-800 pb-1"
+                     :class="{ 'text-red-400': log.level === 'ERROR', 'text-yellow-400': log.level === 'WARNING', 'text-green-400': log.level === 'SUCCESS', 'text-gray-300': log.level === 'INFO' }">
+                    <span class="text-slate-500">[{{ log.time }}]</span> [{{ log.level }}] {{ log.msg }}
+                </div>
+                <div v-if="sysLogs.length === 0" class="text-slate-500 text-center mt-12">暂无系统日志...</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
+                <h2 class="text-sm font-semibold text-indigo-600">💬 详细消息流水录</h2>
+                <span class="text-[10px] text-gray-400">实时展示每条消息的具体走向</span>
+            </div>
+            <div class="bg-indigo-950 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1">
+                <div v-for="(log, index) in msgLogs" :key="index" class="border-b border-indigo-900 pb-1"
+                     :class="{'text-pink-300': log.action.includes('DROP') || log.action.includes('WARN'), 'text-emerald-300': log.action.includes('SEND'), 'text-indigo-200': log.action.includes('RECV') || log.action.includes('READ'), 'text-blue-300': log.action.includes('EDIT')}">
+                    <span class="text-indigo-400 opacity-60">[{{ log.time }}]</span> [{{ log.action }}] {{ log.detail }}
+                </div>
+                <div v-if="msgLogs.length === 0" class="text-indigo-800 text-center mt-12">暂无消息流水...</div>
+            </div>
         </div>
     </div>
 </div>
@@ -187,17 +249,21 @@
             return {
                 appInfo: { bot: {name: '', username: ''}, user: {name: '', status: ''} },
                 mappings: [], newMap: { source_id: '', target_id: '' },
-                filterRules: [], newFilter: { rule_type: 'replace_text', pattern: '', replacement: '' },
-                syncForm: { mode: 'json', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
+                filterRules: [], 
+                newFilter: { rule_type: 'replace', pattern: '', replacement: '', is_case_sensitive: 0 },
+                settings: { sync_text: '1', sync_photo: '1', sync_video: '1', sync_document: '1', sync_audio: '1', sync_voice: '1', sync_sticker: '1', sync_gif: '1' },
+                syncForm: { mode: 'api', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
                 syncStatus: { is_syncing: false, mode: '', total: 0, current: 0, current_text: '', current_link: '', skipped: 0 },
                 message: '', pollingInterval: null,
-                isFirstLogFetch: true, latestSeenLogTime: '', sessionLogs: [],
+                isFirstSysLogFetch: true, latestSysLogTime: '', sysLogs: [],
+                isFirstMsgLogFetch: true, latestMsgLogTime: '', msgLogs: [],
                 isStopping: false, stopProgress: 0
             }
         },
         mounted() {
-            this.fetchAppInfo(); this.loadMappings(); this.loadFilters(); this.fetchBackendLogs();
-            this.pollingInterval = setInterval(() => { this.fetchSyncStatus(); this.fetchBackendLogs(); }, 1500);
+            this.fetchAppInfo(); this.loadMappings(); this.loadFilters(); this.loadSettings();
+            this.fetchSysLogs(); this.fetchMsgLogs();
+            this.pollingInterval = setInterval(() => { this.fetchSyncStatus(); this.fetchSysLogs(); this.fetchMsgLogs(); }, 1500);
         },
         unmounted() { clearInterval(this.pollingInterval); },
         methods: {
@@ -205,6 +271,18 @@
             async fetchAppInfo() { try { this.appInfo = await (await fetch('/api/app_info')).json(); } catch (e) {} },
             async loadMappings() { this.mappings = await (await fetch('/api/mappings')).json(); },
             async loadFilters() { this.filterRules = await (await fetch('/api/filter_rules')).json(); },
+            async loadSettings() {
+                try {
+                    const res = await (await fetch('/api/global_settings')).json();
+                    Object.keys(this.settings).forEach(k => { if(res[k] !== undefined) this.settings[k] = res[k]; });
+                } catch(e) {}
+            },
+            async saveSettings() {
+                const fd = new FormData();
+                Object.keys(this.settings).forEach(k => fd.append(k, this.settings[k]));
+                const res = await (await fetch('/api/global_settings', { method: 'POST', body: fd })).json();
+                this.showToast(res.message);
+            },
             async addMapping() {
                 if (!this.newMap.source_id || !this.newMap.target_id) return;
                 const fd = new FormData(); fd.append('source_id', this.newMap.source_id); fd.append('target_id', this.newMap.target_id);
@@ -222,18 +300,32 @@
                 fd.append('rule_type', this.newFilter.rule_type);
                 fd.append('pattern', this.newFilter.pattern);
                 fd.append('replacement', this.newFilter.replacement);
+                fd.append('is_case_sensitive', this.newFilter.is_case_sensitive);
                 const res = await (await fetch('/api/filter_rules', { method: 'POST', body: fd })).json();
-                this.showToast(res.message); this.loadFilters(); this.newFilter.pattern = ''; this.newFilter.replacement = '';
+                this.showToast(res.message); this.loadFilters(); 
+                this.newFilter.pattern = ''; this.newFilter.replacement = '';
             },
             async deleteFilter(id) {
-                if(!confirm("确定要删除这条过滤规则吗？")) return;
+                if(!confirm("确定要删除这条规则吗？")) return;
                 const res = await (await fetch(`/api/filter_rules/${id}`, { method: 'DELETE' })).json();
                 this.showToast(res.message); this.loadFilters();
+            },
+            // ============== 新增：进程控制方法 ==============
+            async stopServer() {
+                if(!confirm("这将会直接杀死程序进程。如果网页挂载在云服务器，可能需要您登入服务器手动重新启动。\n\n确定要强制关闭服务吗？")) return;
+                const res = await (await fetch('/api/server/stop', { method: 'POST' })).json();
+                this.showToast(res.message);
+            },
+            async restartServer() {
+                if(!confirm("将会强行重启服务端并刷新此页面，确定继续吗？")) return;
+                const res = await (await fetch('/api/server/restart', { method: 'POST' })).json();
+                this.showToast(res.message);
+                setTimeout(() => { location.reload(); }, 2000);
             },
             async startSync() {
                 if (this.syncForm.mode === 'api' && this.appInfo.user.status === '未配置') return this.showToast("API账号未配置！");
                 if (!this.syncForm.source_id || !this.syncForm.target_id) return this.showToast("填频道 ID！");
-                
+                await this.saveSettings();
                 const fd = new FormData();
                 Object.keys(this.syncForm).forEach(k => fd.append(k, this.syncForm[k] || (k.includes('id') && k !== 'source_id' && k !== 'target_id' ? '0' : '')));
                 const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
@@ -242,60 +334,52 @@
             async stopSync() {
                 const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
                 this.showToast(res.message);
-                
-                this.isStopping = true; 
-                this.stopProgress = 0;
-                const stepTime = 100; 
-                const totalSteps = 8000 / stepTime; 
-                
+                this.isStopping = true; this.stopProgress = 0;
+                const stepTime = 100; const totalSteps = 8000 / stepTime; 
                 const timer = setInterval(() => {
-                    if (!this.isStopping) { 
-                        clearInterval(timer); 
-                        return; 
-                    }
-                    if (this.stopProgress < 99) {
-                        this.stopProgress += (100 / totalSteps);
-                    }
+                    if (!this.isStopping) { clearInterval(timer); return; }
+                    if (this.stopProgress < 99) { this.stopProgress += (100 / totalSteps); }
                 }, stepTime);
             },
             async fetchSyncStatus() { 
                 try { 
                     const data = await (await fetch('/api/sync_status')).json(); 
                     this.syncStatus = data;
-                    
                     if (data.is_syncing) {
-                        if (data.mode) {
-                            this.syncForm.mode = data.mode.toLowerCase();
-                        }
-                        
+                        if (data.mode) this.syncForm.mode = data.mode.toLowerCase();
                         if (data.source_id_raw !== undefined) this.syncForm.source_id = data.source_id_raw;
                         if (data.target_id_raw !== undefined) this.syncForm.target_id = data.target_id_raw;
                         if (data.delay !== undefined) this.syncForm.delay = data.delay;
                         if (data.start_id !== undefined) this.syncForm.start_id = data.start_id;
                         if (data.end_id !== undefined) this.syncForm.end_id = data.end_id;
                         if (data.json_path !== undefined) this.syncForm.json_path = data.json_path;
-
-                        if (data.stop_requested && !this.isStopping) {
-                            this.isStopping = true;
-                            this.stopProgress = 99;
-                        }
+                        if (data.stop_requested && !this.isStopping) { this.isStopping = true; this.stopProgress = 99; }
                     } else {
-                        this.isStopping = false;
-                        this.stopProgress = 0;
+                        this.isStopping = false; this.stopProgress = 0;
                     }
                 } catch(e){} 
             },
-            async fetchBackendLogs() {
+            async fetchSysLogs() {
                 try {
                     const data = await (await fetch('/api/logs/backend')).json();
                     if (data.length === 0) return;
-                    if (this.isFirstLogFetch) {
-                        this.latestSeenLogTime = data[0].time; this.isFirstLogFetch = false; return;
-                    }
-                    const newLogs = data.filter(log => log.time > this.latestSeenLogTime);
+                    if (this.isFirstSysLogFetch) { this.latestSysLogTime = data[0].time; this.isFirstSysLogFetch = false; return; }
+                    const newLogs = data.filter(log => log.time > this.latestSysLogTime);
                     if (newLogs.length > 0) {
-                        this.latestSeenLogTime = newLogs[0].time;
-                        this.sessionLogs = [...newLogs, ...this.sessionLogs];
+                        this.latestSysLogTime = newLogs[0].time;
+                        this.sysLogs = [...newLogs, ...this.sysLogs];
+                    }
+                } catch(e){}
+            },
+            async fetchMsgLogs() {
+                try {
+                    const data = await (await fetch('/api/logs/messages')).json();
+                    if (data.length === 0) return;
+                    if (this.isFirstMsgLogFetch) { this.latestMsgLogTime = data[0].time; this.isFirstMsgLogFetch = false; return; }
+                    const newLogs = data.filter(log => log.time > this.latestMsgLogTime);
+                    if (newLogs.length > 0) {
+                        this.latestMsgLogTime = newLogs[0].time;
+                        this.msgLogs = [...newLogs, ...this.msgLogs];
                     }
                 } catch(e){}
             }
