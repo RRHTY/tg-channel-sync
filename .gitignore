@@ -8,6 +8,9 @@ venv/
 .venv/
 env/
 
+临时文件
+temp/
+
 # 敏感信息 
 .env
 *.session

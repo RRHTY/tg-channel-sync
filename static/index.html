@@ -69,8 +69,10 @@
                 </ul>
             </div>
 
-            <div class="card bg-blue-50/50">
-                <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-blue-200">历史数据全能同步</h2>
+            <div class="card bg-blue-50/50 border-t-4 border-blue-500">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-blue-200 flex items-center gap-2">
+                    🚀 历史数据全能同步
+                </h2>
 
                 <div v-if="syncStatus.is_syncing" class="mb-6 p-4 bg-white border border-blue-100 rounded shadow-sm">
                     <div class="flex justify-between text-sm mb-1">
@@ -96,25 +98,42 @@
 
                     <div class="flex bg-white rounded-lg border border-gray-200 p-1">
                         <button @click="syncForm.mode = 'json'" :class="syncForm.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">JSON 导入</button>
-                        <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 拉取</button>
+                        <button @click="syncForm.mode = 'api'" :class="syncForm.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 复制</button>
+                        <button @click="syncForm.mode = 'clone'" :class="syncForm.mode === 'clone' ? 'bg-emerald-100 text-emerald-700 font-semibold' : 'text-gray-500 hover:bg-gray-50'" class="flex-1 py-1.5 text-sm rounded-md transition">API 深度克隆</button>
                     </div>
 
-                    <div v-if="syncForm.mode === 'json'" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
-                        <p class="font-bold mb-1">💡 JSON 模式说明：</p>
-                        <p>读取官方导出的本地JSON直接发送，极度稳定。<b>(已自动应用右侧全局过滤设置)</b></p>
+                    <div v-if="syncForm.mode === 'json'" class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-3 text-xs rounded shadow-sm">
+                        <p class="font-bold mb-1">💡 JSON 模式：</p>
+                        <p>由 <b>机器人</b> 读取导出的本地文件发送，极度稳定无风险。</p>
                     </div>
-                    <div v-if="syncForm.mode === 'api'" class="bg-purple-100 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
-                        <p class="font-bold mb-1">🔑 API 拉取说明：</p>
-                        <p>利用辅助账号无视私密频道权限秒拉历史。<b>(已自动应用右侧全局过滤设置)</b></p>
+                    <div v-if="syncForm.mode === 'api'" class="bg-purple-50 border-l-4 border-purple-500 text-purple-700 p-3 text-xs rounded shadow-sm">
+                        <p class="font-bold mb-1">🔑 API 复制模式：</p>
+                        <p>由 <b>辅助账号</b> 无视私密频道限制执行“转发/复制”。(有转发痕迹)</p>
+                    </div>
+                    <div v-if="syncForm.mode === 'clone'" class="bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 p-3 text-xs rounded shadow-sm">
+                        <p class="font-bold mb-1">♻️ API 深度克隆模式：</p>
+                        <p>将源媒体<b>下载到本地，再当做新文件重传</b>。无痕迹，可洗白特征！<br>⚠️ 支持协程并发与瞬时中断。</p>
+                    </div>
+
+                    <div v-if="syncForm.mode === 'clone'" class="bg-white p-3 rounded border border-gray-100 shadow-sm mt-3">
+                        <label class="block text-xs font-bold text-gray-700 mb-2">执行上传的身份引擎 (仅克隆阶段生效)</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center text-sm cursor-pointer hover:text-blue-600 transition">
+                                <input type="radio" v-model="syncForm.sender" value="bot" class="mr-2 accent-blue-600 w-4 h-4"> 🤖 机器人
+                            </label>
+                            <label class="flex items-center text-sm cursor-pointer hover:text-purple-600 transition">
+                                <input type="radio" v-model="syncForm.sender" value="user" class="mr-2 accent-purple-600 w-4 h-4"> 👤 辅助账号
+                            </label>
+                        </div>
                     </div>
 
                     <div v-if="syncForm.mode === 'json'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                        <label class="block text-xs font-medium text-gray-700 mb-1">本地 JSON 文件绝对路径</label>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">本地 JSON 文件绝对路径</label>
                         <input v-model="syncForm.json_path" type="text" placeholder="例如: D:\TG_Export\result.json" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-blue-500">
                     </div>
 
-                    <div v-if="syncForm.mode === 'api'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                        <label class="block text-xs font-medium text-gray-700 mb-1">消息 ID 范围 <span class="text-gray-400">(不填则拉取全部)</span></label>
+                    <div v-if="syncForm.mode === 'api' || syncForm.mode === 'clone'" class="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                        <label class="block text-xs font-bold text-gray-700 mb-1">消息 ID 范围 <span class="text-gray-400 font-normal">(不填则自动计算全部)</span></label>
                         <div class="flex gap-2">
                             <input v-model="syncForm.start_id" type="number" placeholder="起始 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
                             <input v-model="syncForm.end_id" type="number" placeholder="结束 ID" class="w-1/2 border border-gray-300 rounded p-2 text-sm">
@@ -122,19 +141,19 @@
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-gray-700 mb-1">单条处理延时 (秒): </label>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">单条处理延时 (秒): </label>
                         <input v-model="syncForm.delay" type="number" min="0.5" step="0.5" placeholder="自由输入，最低 0.5 秒" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
 
-                <div class="mt-4">
-                    <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition shadow">
-                        🚀 启动 {{ syncForm.mode.toUpperCase() }} 同步任务
+                <div class="mt-6">
+                    <button v-if="!syncStatus.is_syncing && !isStopping" @click="startSync" class="w-full bg-gray-800 text-white px-4 py-3 rounded-md hover:bg-gray-900 transition font-bold shadow-md text-sm">
+                        🚀 启动 {{ syncForm.mode.toUpperCase() }} 任务
                     </button>
-                    <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition shadow">⏹ 停止 / 暂停当前任务</button>
+                    <button v-else-if="syncStatus.is_syncing && !isStopping" @click="stopSync" class="w-full bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 transition font-bold shadow-md text-sm">⏹ 停止 / 暂停当前任务</button>
 
                     <div v-if="isStopping" class="w-full bg-orange-50 border border-orange-200 rounded p-3 text-center shadow-inner">
-                        <p class="text-sm text-orange-600 font-semibold mb-2">正在安全退出并保存断点，请稍候...</p>
+                        <p class="text-sm text-orange-600 font-bold mb-2">正在强制切断网络流，极速退出...</p>
                         <div class="w-full bg-orange-200 rounded-full h-2">
                             <div class="bg-orange-500 h-2 rounded-full transition-all duration-100 ease-linear" :style="{ width: stopProgress + '%' }"></div>
                         </div>
@@ -153,7 +172,7 @@
                 
                 <div class="bg-white p-4 rounded-lg mb-6 border border-gray-200 shadow-sm">
                     <h3 class="text-sm font-bold text-gray-800 mb-4 flex items-center gap-1.5">
-                        <span class="text-blue-500">✅</span> 允许同步的消息类型 <span class="text-xs font-normal text-gray-500 ml-1">(反选即丢弃，不拉取)</span>
+                        <span class="text-blue-500">✅</span> 允许同步的消息类型 <span class="text-xs font-normal text-gray-500 ml-1">(反选即丢弃)</span>
                     </h3>
                     <div class="grid grid-cols-4 gap-y-4 gap-x-2 mb-5">
                         <label class="flex items-center text-sm cursor-pointer select-none hover:text-blue-600 transition"><input type="checkbox" v-model="settings.sync_text" true-value="1" false-value="0" class="mr-1.5 accent-blue-500 w-4 h-4"> 📝 文本</label>
@@ -177,7 +196,7 @@
                     <div class="space-y-3 mb-5">
                         <select v-model="newFilter.rule_type" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-indigo-500 bg-white">
                             <option value="replace">🎯 仅替换/删除匹配到的文本字词</option>
-                            <option value="drop">💣 屏蔽整条消息 (包含图片视频一并屏蔽)</option>
+                            <option value="drop">💣 屏蔽整条消息 (包含图文一并屏蔽)</option>
                         </select>
                         <input v-model="newFilter.pattern" type="text" placeholder="正则表达式 (如: 广告.*直达 或 \.mp4)" class="w-full border border-gray-300 rounded p-2 text-sm font-mono focus:outline-none focus:border-indigo-500">
                         <input v-if="newFilter.rule_type === 'replace'" v-model="newFilter.replacement" type="text" placeholder="替换成的内容 (留空则代表仅删除匹配文字)" class="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-indigo-500">
@@ -214,10 +233,10 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
         <div class="card">
             <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
-                <h2 class="text-sm font-semibold text-gray-600">🛠️ 系统运行日志</h2>
+                <h2 class="text-sm font-bold text-gray-600">🛠️ 系统运行日志</h2>
                 <span class="text-[10px] text-gray-400">显示任务启停与报错异常</span>
             </div>
-            <div class="bg-slate-900 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1">
+            <div class="bg-slate-900 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1 shadow-inner">
                 <div v-for="(log, index) in sysLogs" :key="index" class="border-b border-slate-800 pb-1"
                      :class="{ 'text-red-400': log.level === 'ERROR', 'text-yellow-400': log.level === 'WARNING', 'text-green-400': log.level === 'SUCCESS', 'text-gray-300': log.level === 'INFO' }">
                     <span class="text-slate-500">[{{ log.time }}]</span> [{{ log.level }}] {{ log.msg }}
@@ -228,11 +247,11 @@
         
         <div class="card">
             <div class="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
-                <h2 class="text-sm font-semibold text-indigo-600">💬 详细消息流水录</h2>
+                <h2 class="text-sm font-bold text-indigo-600">💬 详细消息流水录</h2>
                 <span class="text-[10px] text-gray-400">实时展示每条消息的具体走向</span>
             </div>
-            <div class="bg-indigo-950 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1">
-                <div v-for="(log, index) in msgLogs" :key="index" class="border-b border-indigo-900 pb-1"
+            <div class="bg-indigo-950 p-3 rounded h-80 overflow-y-auto log-container text-xs font-mono space-y-1 shadow-inner">
+                <div v-for="(log, index) in msgLogs" :key="index" class="border-b border-indigo-900/50 pb-1"
                      :class="{'text-pink-300': log.action.includes('DROP') || log.action.includes('WARN'), 'text-emerald-300': log.action.includes('SEND'), 'text-indigo-200': log.action.includes('RECV') || log.action.includes('READ'), 'text-blue-300': log.action.includes('EDIT')}">
                     <span class="text-indigo-400 opacity-60">[{{ log.time }}]</span> [{{ log.action }}] {{ log.detail }}
                 </div>
@@ -252,7 +271,7 @@
                 filterRules: [], 
                 newFilter: { rule_type: 'replace', pattern: '', replacement: '', is_case_sensitive: 0 },
                 settings: { sync_text: '1', sync_photo: '1', sync_video: '1', sync_document: '1', sync_audio: '1', sync_voice: '1', sync_sticker: '1', sync_gif: '1' },
-                syncForm: { mode: 'api', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
+                syncForm: { mode: 'api', sender: 'bot', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
                 syncStatus: { is_syncing: false, mode: '', total: 0, current: 0, current_text: '', current_link: '', skipped: 0 },
                 message: '', pollingInterval: null,
                 isFirstSysLogFetch: true, latestSysLogTime: '', sysLogs: [],
@@ -310,9 +329,8 @@
                 const res = await (await fetch(`/api/filter_rules/${id}`, { method: 'DELETE' })).json();
                 this.showToast(res.message); this.loadFilters();
             },
-            // ============== 新增：进程控制方法 ==============
             async stopServer() {
-                if(!confirm("这将会直接杀死程序进程。如果网页挂载在云服务器，可能需要您登入服务器手动重新启动。\n\n确定要强制关闭服务吗？")) return;
+                if(!confirm("这将会直接杀死程序进程，如果运行在云服务器上可能需要您手动重新启动。\n\n确定要强制关闭服务吗？")) return;
                 const res = await (await fetch('/api/server/stop', { method: 'POST' })).json();
                 this.showToast(res.message);
             },
@@ -323,7 +341,7 @@
                 setTimeout(() => { location.reload(); }, 2000);
             },
             async startSync() {
-                if (this.syncForm.mode === 'api' && this.appInfo.user.status === '未配置') return this.showToast("API账号未配置！");
+                if ((this.syncForm.mode === 'api' || this.syncForm.mode === 'clone') && this.appInfo.user.status === '未配置') return this.showToast("该模式必须配置并登录 API 账号！");
                 if (!this.syncForm.source_id || !this.syncForm.target_id) return this.showToast("填频道 ID！");
                 await this.saveSettings();
                 const fd = new FormData();
@@ -335,7 +353,9 @@
                 const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
                 this.showToast(res.message);
                 this.isStopping = true; this.stopProgress = 0;
-                const stepTime = 100; const totalSteps = 8000 / stepTime; 
+                
+                // 将原先 8000 毫秒(8秒) 的假进度条直接砍到 1500 毫秒(1.5秒)，体验极速刹车！
+                const stepTime = 100; const totalSteps = 1500 / stepTime; 
                 const timer = setInterval(() => {
                     if (!this.isStopping) { clearInterval(timer); return; }
                     if (this.stopProgress < 99) { this.stopProgress += (100 / totalSteps); }
@@ -353,6 +373,10 @@
                         if (data.start_id !== undefined) this.syncForm.start_id = data.start_id;
                         if (data.end_id !== undefined) this.syncForm.end_id = data.end_id;
                         if (data.json_path !== undefined) this.syncForm.json_path = data.json_path;
+                        
+                        if (this.syncForm.mode === 'api') this.syncForm.sender = 'user';
+                        else if (this.syncForm.mode === 'json') this.syncForm.sender = 'bot';
+
                         if (data.stop_requested && !this.isStopping) { this.isStopping = true; this.stopProgress = 99; }
                     } else {
                         this.isStopping = false; this.stopProgress = 0;

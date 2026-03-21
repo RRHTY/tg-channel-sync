@@ -1,9 +1,11 @@
 import asyncio
 import json
 import os
+import shutil
 import sys
 import signal
 import html
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Form
 from fastapi.staticfiles import StaticFiles
@@ -11,8 +13,10 @@ from fastapi.responses import FileResponse
 import uvicorn
 from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramRetryAfter
+from aiogram.types import InputMediaPhoto as AioInputMediaPhoto, InputMediaVideo as AioInputMediaVideo, InputMediaDocument as AioInputMediaDocument, InputMediaAudio as AioInputMediaAudio
 from pyrogram.errors import FloodWait as PyroFloodWait
 from pyrogram.enums import ParseMode
+from pyrogram.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 from dotenv import load_dotenv
 
 import database as db
@@ -31,11 +35,18 @@ sync_state = {
 }
 
 polling_task = None
+TEMP_DIR = "temp"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global polling_task
     await db.init_db()
+    
+    # 【智能缓存管理】: 仅在 Python 启动时彻底清空 temp，运行中途停止绝不删除，完美实现底层断点续传！
+    if os.path.exists(TEMP_DIR):
+        shutil.rmtree(TEMP_DIR, ignore_errors=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    
     try:
         me = await bot_engine.aiogram_bot.get_me()
         app_info_cache["bot"] = {"name": me.first_name, "username": me.username}
@@ -57,23 +68,16 @@ async def lifespan(app: FastAPI):
     yield
     
     print("⏳ 正在安全关闭系统...")
-    
-    # 核心修复：先温柔地取消轮询任务，并等待它完全退出，防止报错
     if polling_task:
         polling_task.cancel()
-        try:
-            await polling_task
-        except asyncio.CancelledError:
-            pass
-            
-    # 给事件循环 0.5 秒时间，让未竟的网络请求彻底断开
+        try: await polling_task
+        except asyncio.CancelledError: pass
     await asyncio.sleep(0.5)
             
     try:
         if bot_engine.pyro_user_app and bot_engine.pyro_user_app.is_initialized:
             await bot_engine.pyro_user_app.stop(block=False)
     except Exception: pass
-    
     try: 
         await bot_engine.aiogram_bot.session.close()
         print("✅ Bot 会话已安全关闭")
@@ -89,7 +93,6 @@ async def serve_index(): return FileResponse("static/index.html")
 @app.get("/api/app_info")
 async def get_app_info(): return app_info_cache
 
-# ================= 新增：服务端强制控制接口 =================
 @app.post("/api/server/stop")
 async def stop_server():
     async def shutdown():
@@ -182,11 +185,11 @@ async def get_message_logs(): return [{"time": l[0], "action": l[1], "detail": l
 async def stop_sync():
     if sync_state["is_syncing"]:
         sync_state["stop_requested"] = True
-        return {"status": "success", "message": "已发送停止指令，正在安全退出..."}
+        return {"status": "success", "message": "已下发硬核中断指令，网络连接将瞬间切断..."}
     return {"status": "error", "message": "没有运行中的任务"}
 
 def is_allowed_msg_type(msg, mode, settings):
-    if mode == 'api':
+    if mode in ['api', 'clone']:
         if msg.photo: return settings.get('sync_photo') == '1'
         elif msg.video: return settings.get('sync_video') == '1'
         elif msg.animation: return settings.get('sync_gif') == '1'
@@ -210,14 +213,14 @@ def is_allowed_msg_type(msg, mode, settings):
 
 @app.post("/api/start_sync")
 async def start_sync(
-        background_tasks: BackgroundTasks, mode: str = Form(...),
+        background_tasks: BackgroundTasks, mode: str = Form(...), sender: str = Form("bot"),
         source_id: str = Form(...), target_id: str = Form(...), delay: float = Form(...), 
         start_id: int = Form(0), end_id: int = Form(0), json_path: str = Form("")
 ):
     if sync_state["is_syncing"]: return {"status": "error", "message": "任务运行中！"}
-    if mode == "api" and not bot_engine.pyro_user_app: return {"status": "error", "message": "API信息未配置"}
+    if mode in ["api", "clone"] and not bot_engine.pyro_user_app: return {"status": "error", "message": "该模式必须配置 API 账号"}
     if mode == "json" and not os.path.exists(json_path): return {"status": "error", "message": "找不到 JSON 文件！"}
-    background_tasks.add_task(process_master_sync, mode, source_id, target_id, delay, start_id, end_id, json_path)
+    background_tasks.add_task(process_master_sync, mode, sender, source_id, target_id, delay, start_id, end_id, json_path)
     return {"status": "success", "message": f"已启动 {mode.upper()} 任务"}
 
 def parse_tg_json_text(text_list):
@@ -239,10 +242,47 @@ def parse_tg_json_text(text_list):
             else: html_text += inner
     return html_text
 
-async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str, delay: float, start_id: int, end_id: int, json_path: str):
+# ================= 核心修复：0 延迟“拔网线”级终止器 =================
+async def safe_execute(coro):
+    """包裹任意异步任务，实现按停瞬间斩断数据流"""
+    task = asyncio.create_task(coro)
+    while not task.done():
+        if sync_state.get("stop_requested"):
+            task.cancel()
+            raise Exception("STOP_REQUESTED")
+        await asyncio.sleep(0.2)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        raise Exception("STOP_REQUESTED")
+
+def create_progress_callback(action_name):
+    start_t = time.time()
+    last_upd = 0
+    async def progress(current, total):
+        nonlocal last_upd
+        if sync_state.get("stop_requested"):
+            raise Exception("STOP_REQUESTED")
+        now = time.time()
+        if now - last_upd > 0.5 or current == total:
+            last_upd = now
+            elapsed = now - start_t
+            if elapsed > 0 and total > 0:
+                spd_mb = (current / elapsed) / 1048576
+                pct = current / total * 100
+                sync_state["current_text"] = f"{action_name} {pct:.1f}% ({spd_mb:.1f} MB/s)"
+            elif total > 0:
+                pct = current / total * 100
+                sync_state["current_text"] = f"{action_name} {pct:.1f}%"
+    return progress
+
+async def process_master_sync(mode: str, sender: str, source_id_raw: str, target_id_raw: str, delay: float, start_id: int, end_id: int, json_path: str):
     global sync_state
     safe_delay = max(0.5, float(delay))
     
+    if mode == "api": sender = "user"
+    elif mode == "json": sender = "bot"
+
     sync_state.update({
         "is_syncing": True, "mode": mode.upper(), 
         "source_id_raw": source_id_raw, "target_id_raw": target_id_raw,
@@ -260,8 +300,9 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
         return
 
     try:
-        if mode == "api":
+        if mode in ["api", "clone"]:
             app = bot_engine.pyro_user_app
+            bot = bot_engine.aiogram_bot
             if not start_id: start_id = 1
             if not end_id:
                 async for msg in app.get_chat_history(source_id, limit=1): end_id = msg.id
@@ -270,6 +311,8 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
             sync_state["end_id"] = end_id
             sync_state["total"] = end_id - start_id + 1
             chunk_size = 100
+            
+            await db.add_log("INFO", f"🚀 [{mode.upper()}模式] 开始拉取 ID: {start_id} 到 {end_id} (执行引擎: {sender.upper()})")
             
             for chunk_start in range(start_id, end_id + 1, chunk_size):
                 if sync_state["stop_requested"]: break
@@ -282,8 +325,7 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                 filtered_msgs = []
                 for msg in msgs:
                     if msg is None or msg.empty: continue
-                    if not is_allowed_msg_type(msg, 'api', settings): 
-                        await db.add_msg_log("DROP_TYPE", f"拉取 ID:{msg.id} | 被消息类型设置拦截")
+                    if not is_allowed_msg_type(msg, mode, settings): 
                         continue
                     filtered_msgs.append(msg)
                 
@@ -313,28 +355,96 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                         try: text_html = msg.text.html if msg.text else (msg.caption.html if msg.caption else "")
                         except: text_html = msg.text or msg.caption or ""
                         
-                        await db.add_msg_log("API_RECV", f"读取 ID:{msg.id} | 内容:{text_html[:20]}")
+                        await db.add_msg_log(f"{mode.upper()}_RECV", f"读取 ID:{msg.id} | 内容:{text_html[:20]}")
 
                         should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
-                        if should_skip: 
-                            await db.add_msg_log("DROP_REGEX", f"ID:{msg.id} | 命中屏蔽词")
-                            continue
+                        if should_skip: continue
                         if not has_media and not new_html.strip(): continue 
 
-                        if await update_state_and_check_skip(source_id, msg.id, new_html[:50] or "[单条媒体]"): continue
+                        if await update_state_and_check_skip(source_id, msg.id, new_html[:50] or "[单条内容]"): continue
                         
                         try:
-                            if new_html != text_html:
-                                if not has_media: copied = await app.send_message(chat_id=target_id, text=new_html, parse_mode=ParseMode.HTML)
-                                else: copied = await app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id, caption=new_html, parse_mode=ParseMode.HTML)
-                            else:
-                                copied = await app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id)
-                            await record_success(source_id, msg.id, copied.id)
-                            await db.add_msg_log("API_SEND", f"目标:[{target_id}] 新ID:{copied.id} | 转发成功")
-                        except PyroFloodWait as e: await handle_floodwait(e.value)
-                        except Exception as e: await db.add_log("ERROR", f"❌ 单条同步失败 ID {msg.id}: {e}")
-                        await asyncio.sleep(safe_delay)
+                            if mode == "api":
+                                if new_html != text_html:
+                                    if not has_media: copied = await safe_execute(app.send_message(chat_id=target_id, text=new_html, parse_mode=ParseMode.HTML))
+                                    else: copied = await safe_execute(app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id, caption=new_html, parse_mode=ParseMode.HTML))
+                                else: copied = await safe_execute(app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=msg.id))
+                                sent_id = copied.id
+                                await record_success(source_id, msg.id, sent_id)
+                                await db.add_msg_log(f"{mode.upper()}_SEND", f"目标:[{target_id}] 新ID:{sent_id} | 同步成功")
+                                await asyncio.sleep(safe_delay)
+
+                            elif mode == "clone":
+                                if not has_media:
+                                    if sender == 'bot': sent_id = (await safe_execute(bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML"))).message_id
+                                    else: sent_id = (await safe_execute(app.send_message(chat_id=target_id, text=new_html, parse_mode=ParseMode.HTML))).id
+                                    await record_success(source_id, msg.id, sent_id)
+                                    await asyncio.sleep(safe_delay)
+                                else:
+                                    # ============ 深度克隆：加入断点续传与彻底重试保护 ============
+                                    file_path = None
+                                    for attempt in range(3):
+                                        if sync_state["stop_requested"]: break
+                                        try:
+                                            # Pyrogram 底层会自动通过识别 temp_dir 的文件碎片实现断点续传！
+                                            file_path = await safe_execute(app.download_media(msg, file_name=f"{TEMP_DIR}/", progress=create_progress_callback("⏬ 下载单文件")))
+                                            if file_path: break
+                                        except Exception as e:
+                                            if "STOP_REQUESTED" in str(e): raise e
+                                            await db.add_log("ERROR", f"⏬ 下载超时失败(重试 {attempt+1}/3) ID {msg.id}")
+                                            await asyncio.sleep(2)
+                                            
+                                    if not file_path or sync_state["stop_requested"]: continue
+                                    
+                                    # 核心修复 2：Bot 限制 50MB 智能检测兜底
+                                    file_size = os.path.getsize(file_path)
+                                    actual_sender = sender
+                                    if actual_sender == 'bot' and file_size > 50 * 1024 * 1024:
+                                        await db.add_msg_log("WARN", f"文件达 {file_size/1048576:.1f}MB，Bot受限50M，自动切为用户账号上传")
+                                        actual_sender = 'user'
+
+                                    for attempt in range(3):
+                                        if sync_state["stop_requested"]: break
+                                        try:
+                                            if actual_sender == 'bot':
+                                                sync_state["current_text"] = "⏫ 机器人高速静默上传中..."
+                                                media_file = FSInputFile(file_path)
+                                                if msg.photo: sent = await safe_execute(bot.send_photo(chat_id=target_id, photo=media_file, caption=new_html, parse_mode="HTML"))
+                                                elif msg.video: sent = await safe_execute(bot.send_video(chat_id=target_id, video=media_file, caption=new_html, parse_mode="HTML"))
+                                                elif msg.audio: sent = await safe_execute(bot.send_audio(chat_id=target_id, audio=media_file, caption=new_html, parse_mode="HTML"))
+                                                elif msg.voice: sent = await safe_execute(bot.send_voice(chat_id=target_id, voice=media_file, caption=new_html, parse_mode="HTML"))
+                                                else: sent = await safe_execute(bot.send_document(chat_id=target_id, document=media_file, caption=new_html, parse_mode="HTML"))
+                                                sent_id = sent.message_id
+                                            else:
+                                                up_cb = create_progress_callback("⏫ 辅助账号上传")
+                                                if msg.photo: sent = await safe_execute(app.send_photo(chat_id=target_id, photo=file_path, caption=new_html, parse_mode=ParseMode.HTML, progress=up_cb))
+                                                elif msg.video: sent = await safe_execute(app.send_video(chat_id=target_id, video=file_path, caption=new_html, parse_mode=ParseMode.HTML, progress=up_cb))
+                                                elif msg.audio: sent = await safe_execute(app.send_audio(chat_id=target_id, audio=file_path, caption=new_html, parse_mode=ParseMode.HTML, progress=up_cb))
+                                                elif msg.voice: sent = await safe_execute(app.send_voice(chat_id=target_id, voice=file_path, caption=new_html, parse_mode=ParseMode.HTML, progress=up_cb))
+                                                else: sent = await safe_execute(app.send_document(chat_id=target_id, document=file_path, caption=new_html, parse_mode=ParseMode.HTML, progress=up_cb))
+                                                sent_id = sent.id
+                                                
+                                            await record_success(source_id, msg.id, sent_id)
+                                            await db.add_msg_log("CLONE_SEND", f"目标:[{target_id}] 新ID:{sent_id} | 同步成功")
+                                            break
+                                        except Exception as e:
+                                            if "STOP_REQUESTED" in str(e): raise e
+                                            await db.add_log("ERROR", f"⏫ 上传网络波动(重试 {attempt+1}/3) ID {msg.id}")
+                                            await asyncio.sleep(2)
+                                            
+                                    try: os.remove(file_path) # 无论成功失败，重试完必清理当前文件
+                                    except: pass
+                                    await asyncio.sleep(safe_delay)
+
+                        except Exception as e:
+                            err_str = str(e)
+                            if sync_state["stop_requested"] and ("STOP_REQUESTED" in err_str or "write" in err_str):
+                                await db.add_log("WARNING", "⏹ 任务强行终止，已成功斩断底层网络流！")
+                                break
+                            await db.add_log("ERROR", f"❌ 单条同步抛出异常 ID {msg.id}: {e}")
+                    
                     else:
+                        # 媒体组处理
                         all_skipped = True
                         should_skip_group = False
                         for m in group:
@@ -347,36 +457,127 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                             if not await db.is_message_synced(source_id, m.id): all_skipped = False
                             else: sync_state["skipped"] += 1
                         msg_ids = [m.id for m in group]
-                        await db.add_msg_log("API_RECV_GRP", f"读取 组IDs:{msg_ids}")
-                        if should_skip_group:
-                            await db.add_msg_log("DROP_REGEX", f"组IDs:{msg_ids} | 命中屏蔽词")
-                            continue
-                        if all_skipped: continue
+                        await db.add_msg_log(f"{mode.upper()}_RECV_GRP", f"读取 组IDs:{msg_ids}")
+                        if should_skip_group or all_skipped: continue
+
                         success = False
-                        for attempt in range(3):
-                            if sync_state["stop_requested"]: break
-                            try:
-                                copied_msgs = await app.copy_media_group(chat_id=target_id, from_chat_id=source_id, message_id=msg_ids[0])
-                                for orig_m, new_m in zip(group, copied_msgs): await record_success(source_id, orig_m.id, new_m.id)
-                                await db.add_msg_log("API_SEND_GRP", f"目标:[{target_id}] | 组转发成功")
-                                success = True; break
-                            except PyroFloodWait as e: await asyncio.sleep(e.value)
-                            except TypeError as e:
-                                if "topics" in str(e) or "Messages.__init__" in str(e):
-                                    for m in group: await record_success(source_id, m.id, 0)
-                                    await db.add_msg_log("API_SEND_GRP", f"目标:[{target_id}] | 组转发成功(规避Bug)")
+                        if mode == "api":
+                            for attempt in range(3):
+                                if sync_state["stop_requested"]: break
+                                try:
+                                    copied_msgs = await safe_execute(app.copy_media_group(chat_id=target_id, from_chat_id=source_id, message_id=msg_ids[0]))
+                                    for orig_m, new_m in zip(group, copied_msgs): await record_success(source_id, orig_m.id, new_m.id)
+                                    await db.add_msg_log("API_SEND_GRP", f"目标:[{target_id}] | 组复制成功")
                                     success = True; break
-                                else: break 
-                            except Exception: break 
+                                except TypeError as e:
+                                    if "topics" in str(e) or "Messages.__init__" in str(e):
+                                        for m in group: await record_success(source_id, m.id, 0)
+                                        success = True; break
+                                    else: break 
+                                except Exception as e: 
+                                    if "STOP_REQUESTED" in str(e): raise e
+
+                        elif mode == "clone":
+                            downloaded_files = []
+                            dl_success = False
+                            for attempt in range(3):
+                                if sync_state["stop_requested"]: break
+                                try:
+                                    sem = asyncio.Semaphore(3)
+                                    async def dl_album_item(m_item, idx, tot):
+                                        async with sem:
+                                            prog = create_progress_callback(f"⏬ 并发下载 [{idx}/{tot}]")
+                                            return await safe_execute(app.download_media(m_item, file_name=f"{TEMP_DIR}/", progress=prog))
+                                    
+                                    tasks = [dl_album_item(m, i+1, len(group)) for i, m in enumerate(group)]
+                                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                                    
+                                    has_err = False
+                                    for res in results:
+                                        if isinstance(res, Exception):
+                                            if "STOP_REQUESTED" in str(res): sync_state["stop_requested"] = True
+                                            has_err = True
+                                            break
+                                    
+                                    if not has_err and not sync_state["stop_requested"]:
+                                        downloaded_files = [(m, p) for m, p in zip(group, results) if isinstance(p, str)]
+                                        dl_success = True; break
+                                    else:
+                                        await asyncio.sleep(2)
+                                except Exception as e:
+                                    if "STOP_REQUESTED" in str(e): break
+                                    
+                            if not dl_success or sync_state["stop_requested"]:
+                                for _, p in downloaded_files: 
+                                    try: os.remove(p)
+                                    except: pass
+                                continue
+                                
+                            # 核心修复 3：相册的 50MB Bot限制智能检测兜底
+                            actual_sender = sender
+                            if actual_sender == 'bot':
+                                for _, p in downloaded_files:
+                                    if os.path.getsize(p) > 50 * 1024 * 1024:
+                                        await db.add_msg_log("WARN", f"相册内含 > 50MB 巨物，强制切换整组为辅助账号上传")
+                                        actual_sender = 'user'
+                                        break
+
+                            for attempt in range(3):
+                                if sync_state["stop_requested"]: break
+                                try:
+                                    sync_state["current_text"] = f"⏫ 整体打包上传相册 ({len(group)}项)..."
+                                    if actual_sender == 'bot':
+                                        media_group = []
+                                        for m, p in downloaded_files:
+                                            try: t_html = m.text.html if m.text else (m.caption.html if m.caption else "")
+                                            except: t_html = m.text or m.caption or ""
+                                            _, cap = await db.apply_message_filters(t_html, True, "")
+                                            f = FSInputFile(p)
+                                            if m.photo: media_group.append(AioInputMediaPhoto(media=f, caption=cap, parse_mode="HTML"))
+                                            elif m.video: media_group.append(AioInputMediaVideo(media=f, caption=cap, parse_mode="HTML"))
+                                            elif m.audio: media_group.append(AioInputMediaAudio(media=f, caption=cap, parse_mode="HTML"))
+                                            else: media_group.append(AioInputMediaDocument(media=f, caption=cap, parse_mode="HTML"))
+                                        copied_msgs = await safe_execute(bot.send_media_group(chat_id=target_id, media=media_group))
+                                        for orig_m, new_m in zip(group, copied_msgs): await record_success(source_id, orig_m.id, new_m.message_id)
+                                    else:
+                                        media_group = []
+                                        for m, p in downloaded_files:
+                                            try: t_html = m.text.html if m.text else (m.caption.html if m.caption else "")
+                                            except: t_html = m.text or m.caption or ""
+                                            _, cap = await db.apply_message_filters(t_html, True, "")
+                                            if m.photo: media_group.append(InputMediaPhoto(p, caption=cap, parse_mode=ParseMode.HTML))
+                                            elif m.video: media_group.append(InputMediaVideo(p, caption=cap, parse_mode=ParseMode.HTML))
+                                            elif m.audio: media_group.append(InputMediaAudio(p, caption=cap, parse_mode=ParseMode.HTML))
+                                            else: media_group.append(InputMediaDocument(p, caption=cap, parse_mode=ParseMode.HTML))
+                                        copied_msgs = await safe_execute(app.send_media_group(chat_id=target_id, media=media_group))
+                                        for orig_m, new_m in zip(group, copied_msgs): await record_success(source_id, orig_m.id, new_m.id)
+                                    
+                                    await db.add_msg_log("CLONE_SEND_GRP", f"目标:[{target_id}] | 组克隆上传成功")
+                                    success = True; break
+                                except TypeError as e:
+                                    if "topics" in str(e) or "Messages.__init__" in str(e):
+                                        for m in group: await record_success(source_id, m.id, 0)
+                                        success = True; break
+                                    else: break 
+                                except Exception as e:
+                                    if "STOP_REQUESTED" in str(e): raise e
+                                    await asyncio.sleep(2)
+                                
+                            for _, p in downloaded_files:
+                                try: os.remove(p)
+                                except: pass
+
                         if not success and not sync_state["stop_requested"]:
                             for m in group:
                                 if sync_state["stop_requested"]: break 
                                 try:
-                                    copied = await app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.id)
-                                    await record_success(source_id, m.id, copied.id)
+                                    if sender == 'bot': copied = await safe_execute(bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.id))
+                                    else: copied = await safe_execute(app.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.id))
+                                    sent_id = copied.message_id if sender == 'bot' else copied.id
+                                    await record_success(source_id, m.id, sent_id)
                                     await asyncio.sleep(safe_delay)
-                                except PyroFloodWait as e: await handle_floodwait(e.value)
-                                except Exception: pass
+                                except Exception as e:
+                                    if "STOP_REQUESTED" in str(e): break
                         elif success and not sync_state["stop_requested"]: await asyncio.sleep(safe_delay)
 
         elif mode == "json":
@@ -409,18 +610,24 @@ async def process_master_sync(mode: str, source_id_raw: str, target_id_raw: str,
                     sent_id = None
                     if abs_media_path and os.path.exists(abs_media_path):
                         media_file = FSInputFile(abs_media_path)
-                        if m.get('photo'): sent = await bot.send_photo(chat_id=target_id, photo=media_file, caption=new_html, parse_mode="HTML")
-                        elif m.get('media_type') == 'video_file': sent = await bot.send_video(chat_id=target_id, video=media_file, caption=new_html, parse_mode="HTML")
-                        else: sent = await bot.send_document(chat_id=target_id, document=media_file, caption=new_html, parse_mode="HTML")
+                        if m.get('photo'): sent = await safe_execute(bot.send_photo(chat_id=target_id, photo=media_file, caption=new_html, parse_mode="HTML"))
+                        elif m.get('media_type') == 'video_file': sent = await safe_execute(bot.send_video(chat_id=target_id, video=media_file, caption=new_html, parse_mode="HTML"))
+                        elif m.get('media_type') == 'audio_file': sent = await safe_execute(bot.send_audio(chat_id=target_id, audio=media_file, caption=new_html, parse_mode="HTML"))
+                        elif m.get('media_type') == 'voice_message': sent = await safe_execute(bot.send_voice(chat_id=target_id, voice=media_file, caption=new_html, parse_mode="HTML"))
+                        else: sent = await safe_execute(bot.send_document(chat_id=target_id, document=media_file, caption=new_html, parse_mode="HTML"))
                         sent_id = sent.message_id
                     elif new_html.strip():
-                        sent_id = (await bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML")).message_id
+                        sent_id = (await safe_execute(bot.send_message(chat_id=target_id, text=new_html, parse_mode="HTML"))).message_id
 
                     if sent_id: 
                         await record_success(source_id, msg_id, sent_id)
                         await db.add_msg_log("JSON_SEND", f"ID:{msg_id} -> 新ID:{sent_id} | 本地上传成功")
-                except TelegramRetryAfter as e: await handle_floodwait(e.retry_after)
-                except Exception as e: await db.add_log("ERROR", f"❌ 发送失败 ID {msg_id}: {e}")
+                except Exception as e:
+                    err_str = str(e)
+                    if sync_state["stop_requested"] and "STOP_REQUESTED" in err_str:
+                        await db.add_log("WARNING", "⏹ 任务强行终止，网络流已切断！")
+                        break
+                    await db.add_log("ERROR", f"❌ 发送失败 ID {msg_id}: {e}")
                 await asyncio.sleep(safe_delay)
 
     except asyncio.CancelledError: pass

@@ -3,6 +3,7 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.types import Message
 from aiogram.exceptions import TelegramRetryAfter
 from pyrogram import Client
@@ -19,7 +20,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 if not BOT_TOKEN: raise ValueError("❌ 错误：未在 .env 中找到 BOT_TOKEN，请检查配置。")
 
-aiogram_bot = Bot(token=BOT_TOKEN)
+# 核心修复：大幅提升 Aiogram 的会话超时时间至 1 小时，解决上传文件报 Request timeout error 的问题
+session = AiohttpSession(timeout=3600)
+aiogram_bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 media_group_cache = {}
 
@@ -53,12 +56,10 @@ async def handle_new_post(message: Message):
     chat_name = get_chat_name(message.chat)
     msg_type = get_msg_type(message)
 
-    # 全局类型拦截
     if not await is_type_allowed(msg_type):
         await db.add_msg_log("DROP_TYPE", f"源: [{chat_name}] ID:{message.message_id} | 拦截类型: {msg_type.upper()}")
         return
 
-    # ================= 媒体组处理 =================
     if message.media_group_id:
         mg_id = message.media_group_id
         if mg_id not in media_group_cache:
@@ -103,7 +104,6 @@ async def handle_new_post(message: Message):
         else: media_group_cache[mg_id].append(message)
         return
 
-    # ================= 单条消息处理 =================
     has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'voice', 'animation']
     file_name = message.document.file_name if message.document else (message.video.file_name if message.video else "")
     text_html = message.html_text if message.text or message.caption else ""
