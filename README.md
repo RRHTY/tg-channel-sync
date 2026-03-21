@@ -4,9 +4,9 @@
 
 [GitHub 仓库地址](https://github.com/RRHTY/tg-channel-sync)
 
-<img width="1492" height="1176" alt="image" src="https://github.com/user-attachments/assets/3bb25e20-1f76-4447-8e90-9c23e7708aec" />
-
+<img width="1376" height="1182" alt="image" src="https://github.com/user-attachments/assets/f24db856-036c-4000-bed9-f1bcb9db854d" />
 <img width="1194" height="1002" alt="image" src="https://github.com/user-attachments/assets/87c66f35-dde2-4afc-b7df-1534b56d8032" />
+
 
 -----
 
@@ -26,6 +26,7 @@
       - **② JSON 导入 (强烈推荐)**：读取官方导出的本地 JSON 历史记录与媒体文件，安全、稳定、极速。。
 
 -----
+
 
 ## 🛠️ 安装与部署
 
