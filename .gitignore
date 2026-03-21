@@ -10,6 +10,7 @@ env/
 
 临时文件
 temp/
+.restart_flag
 
 # 敏感信息 
 .env

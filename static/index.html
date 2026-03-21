@@ -168,7 +168,6 @@ const LogViewer = {
     `
 };
 
-// ======================= 根应用实例 =======================
 const app = createApp({
     data() {
         return {
@@ -199,9 +198,10 @@ const app = createApp({
         async loadMappings() { this.mappings = await (await fetch('/api/mappings')).json(); },
         async loadFilters() { this.filterRules = await (await fetch('/api/filter_rules')).json(); },
         async loadSettings() { const r = await (await fetch('/api/global_settings')).json(); Object.keys(this.settings).forEach(k => {if(r[k]!==undefined) this.settings[k]=r[k]}); },
-        async saveSettings(settings) {
-            const fd = new FormData(); Object.keys(settings).forEach(k => fd.append(k, settings[k]));
-            await fetch('/api/global_settings', { method: 'POST', body: fd }); this.showToast("全局类型配置已保存！");
+        async saveSettings(silent = false) {
+            const fd = new FormData(); Object.keys(this.settings).forEach(k => fd.append(k, this.settings[k]));
+            const res = await (await fetch('/api/global_settings', { method: 'POST', body: fd })).json();
+            if (!silent) this.showToast(res.message);
         },
         async addMapping(s, t) {
             const fd = new FormData(); fd.append('source_id', s); fd.append('target_id', t);
@@ -215,33 +215,27 @@ const app = createApp({
         },
         async deleteFilter(id) { await fetch(`/api/filter_rules/${id}`, { method: 'DELETE' }); this.loadFilters(); },
         
-        // 核心修复 4：关机重启前主动切断前端 SSE，配合后端的安全退出
         async stopServer() { 
-            if(confirm("确定强制关闭系统进程吗？")) {
+            if(confirm("这将会瞬间切断底层网络释放端口，后台进程将被安全处死。\n\n确定强制关闭吗？")) {
                 if(this.sseConnection) this.sseConnection.close();
                 await fetch('/api/server/stop', { method: 'POST' }); 
             }
         },
         async restartServer() { 
-            if(confirm("确定重启后端服务吗？")) { 
+            if(confirm("这将会瞬间斩断旧进程，重新拉起新的服务进程。\n\n确定重启吗？")) { 
                 if(this.sseConnection) this.sseConnection.close();
                 await fetch('/api/server/restart', { method: 'POST' }); 
-                setTimeout(()=>location.reload(), 2000); 
+                // 核心修复：给操作系统留出 4 秒时间释放旧端口并完全拉起新服务
+                setTimeout(()=>location.reload(), 4000); 
             } 
         },
         async startSync(form) {
-            await this.saveSettings(this.settings);
+            await this.saveSettings(true);
             const fd = new FormData(); Object.keys(form).forEach(k => fd.append(k, form[k]||(k.includes('id')?'0':'')));
             const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
             if (res.status === 'error') this.showToast(res.message);
         },
-        async stopSync() { 
-            const res = await (await fetch('/api/stop_sync', { method: 'POST' })).json();
-            // 核心修复 5：如果后端返回空闲，绝不执行假动画，也不打断 SSE 状态更新！
-            if (res.status === 'error') {
-                this.showToast(res.message);
-            }
-        }
+        async stopSync() { await fetch('/api/stop_sync', { method: 'POST' }); }
     }
 });
 

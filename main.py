@@ -7,6 +7,7 @@ import signal
 import html
 import time
 import uvicorn
+import subprocess
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Form, Request
 from fastapi.staticfiles import StaticFiles
@@ -31,9 +32,22 @@ sync_state = {
     "target_id_raw": "", "delay": 5, "start_id": "", "end_id": "", "json_path": ""
 }
 polling_task, TEMP_DIR = None, "temp"
-
-# 核心修复 1：新增全局关机事件通行证
 SHUTDOWN_EVENT = asyncio.Event()
+
+# ================= 核心升级：独立且绝对安全的资源释放函数 =================
+async def _force_cleanup():
+    """无论何种情况，确保 Telegram 底层连接被干净利落地断开"""
+    SHUTDOWN_EVENT.set()
+    sync_state["stop_requested"] = True
+    if polling_task:
+        polling_task.cancel()
+        try: await polling_task
+        except Exception: pass
+    if bot_engine.pyro_user_app and bot_engine.pyro_user_app.is_initialized:
+        try: await bot_engine.pyro_user_app.stop()
+        except Exception: pass
+    try: await bot_engine.aiogram_bot.session.close()
+    except Exception: pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,25 +68,14 @@ async def lifespan(app: FastAPI):
             user_me = await bot_engine.pyro_user_app.get_me()
             app_info_cache["user"] = {"name": user_me.first_name, "status": "已登录"}
         except Exception: pass
-    
+        
     yield
     
-    # === 核心修复 2：进入关机流程时，激活广播，瞬间释放所有 SSE 长连接 ===
-    print("⏳ 正在安全关闭系统...")
-    SHUTDOWN_EVENT.set()
-    
-    if polling_task:
-        polling_task.cancel()
-        try: await polling_task
-        except asyncio.CancelledError: pass
-    
-    await asyncio.sleep(0.5)
-    
-    try:
-        if bot_engine.pyro_user_app and bot_engine.pyro_user_app.is_initialized: 
-            await bot_engine.pyro_user_app.stop(block=False)
-        await bot_engine.aiogram_bot.session.close()
-    except Exception: pass
+    # 终端按下 Ctrl+C 时触发的正常关机流
+    print("\n⏳ 收到关机信号，正在安全释放系统资源...")
+    if not SHUTDOWN_EVENT.is_set():
+        await _force_cleanup()
+    print("👋 系统已完全退出")
 
 app = FastAPI(title="杏铃同步台", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -92,47 +95,48 @@ async def sse_stream(request: Request):
         if sys_logs: last_sys_id = sys_logs[0][0]
         if msg_logs: last_msg_id = msg_logs[0][0]
         
-        # 核心修复 3：不再死循环，若监听到关机事件或客户端关闭网页，主动结束释放 Uvicorn
         while not SHUTDOWN_EVENT.is_set():
-            if await request.is_disconnected():
-                break
-                
+            if await request.is_disconnected(): break
             payload = {"status": sync_state}
-            
             new_sys = await db.get_sys_logs_after(last_sys_id)
             if new_sys:
                 last_sys_id = new_sys[0][0]
                 payload["sys_logs"] = [{"id": r[0], "time": r[1], "level": r[2], "msg": r[3]} for r in reversed(new_sys)]
-                
             new_msg = await db.get_msg_logs_after(last_msg_id)
             if new_msg:
                 last_msg_id = new_msg[0][0]
                 payload["msg_logs"] = [{"id": r[0], "time": r[1], "action": r[2], "detail": r[3]} for r in reversed(new_msg)]
                 
             yield f"data: {json.dumps(payload)}\n\n"
-            
-            try:
-                await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                break
-                
+            try: await asyncio.sleep(1)
+            except asyncio.CancelledError: break
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+# ================= 核心升级：影子进程控制架构 =================
 @app.post("/api/server/stop")
 async def stop_server():
     async def shutdown():
-        await asyncio.sleep(1)
-        os.kill(os.getpid(), signal.SIGINT)
+        await _force_cleanup()
+        print("🛑 正在强制物理断电释放端口...")
+        os._exit(0) # 物理级切断进程，毫无残留
     asyncio.create_task(shutdown())
-    return {"status": "success", "message": "服务端正在关闭"}
+    return {"status": "success", "message": "服务端正在关闭，请稍候关闭此页面..."}
 
 @app.post("/api/server/restart")
 async def restart_server():
     async def restart():
-        await asyncio.sleep(1)
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        await _force_cleanup()
+        print("🔄 正在移交端口并准备重启...")
+        # 召唤影子进程：让系统等 2 秒(确保旧端口释放)，然后拉起新的 main.py
+        if sys.platform == "win32":
+            cmd = f'ping 127.0.0.1 -n 3 > nul && "{sys.executable}" ' + ' '.join(f'"{arg}"' for arg in sys.argv)
+            subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+        else:
+            cmd = f'sleep 2 && "{sys.executable}" ' + ' '.join(f'"{arg}"' for arg in sys.argv)
+            subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
+        os._exit(0) # 旧进程光速自杀腾出 8011 端口
     asyncio.create_task(restart())
-    return {"status": "success", "message": "服务端重启中"}
+    return {"status": "success", "message": "服务端正在重载配置并重启..."}
 
 async def resolve_chat_id(chat_ref: str) -> int:
     chat_ref = str(chat_ref).strip()
@@ -228,8 +232,7 @@ async def dynamic_send(client, msg_type, chat_id, file_ref, caption, parse_mode)
     if msg_type != 'text':
         kwargs["caption"] = caption
         kwargs[msg_type if hasattr(client, method_name) else 'document'] = file_ref
-    else:
-        kwargs["text"] = caption
+    else: kwargs["text"] = caption
     return await method(**kwargs)
 
 async def safe_execute(coro):
@@ -433,8 +436,7 @@ async def process_master_sync(mode: str, sender: str, source_id_raw: str, target
                         await asyncio.sleep(safe_delay)
 
         elif mode == "json":
-            # JSON 的逻辑不变
-            pass
+            pass # JSON 逻辑保持不变
             
     except asyncio.CancelledError: pass
     except Exception as e: await db.add_log("ERROR", f"同步中断: {e}")
