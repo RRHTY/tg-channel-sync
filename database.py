@@ -6,71 +6,19 @@ DB_FILE = "data.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS channel_mappings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_id INTEGER NOT NULL UNIQUE,
-                target_id INTEGER NOT NULL
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS message_mappings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_channel_id INTEGER NOT NULL,
-                source_msg_id INTEGER NOT NULL,
-                target_msg_id INTEGER NOT NULL,
-                UNIQUE(source_channel_id, source_msg_id)
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS system_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                level TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS filter_rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rule_type TEXT NOT NULL,
-                pattern TEXT NOT NULL,
-                replacement TEXT,
-                is_case_sensitive INTEGER DEFAULT 0
-            )
-        """)
-        # 新增：消息流水独立日志表
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS message_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                action TEXT NOT NULL,
-                detail TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        # 新增：全局设置表（存储类型开关）
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS global_settings (
-                setting_key TEXT PRIMARY KEY,
-                setting_value TEXT NOT NULL
-            )
-        """)
-        
-        try:
-            await db.execute("ALTER TABLE filter_rules ADD COLUMN is_case_sensitive INTEGER DEFAULT 0")
+        await db.execute("CREATE TABLE IF NOT EXISTS channel_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER NOT NULL UNIQUE, target_id INTEGER NOT NULL)")
+        await db.execute("CREATE TABLE IF NOT EXISTS message_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, source_channel_id INTEGER NOT NULL, source_msg_id INTEGER NOT NULL, target_msg_id INTEGER NOT NULL, UNIQUE(source_channel_id, source_msg_id))")
+        await db.execute("CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT NOT NULL, message TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        await db.execute("CREATE TABLE IF NOT EXISTS filter_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_type TEXT NOT NULL, pattern TEXT NOT NULL, replacement TEXT, is_case_sensitive INTEGER DEFAULT 0)")
+        await db.execute("CREATE TABLE IF NOT EXISTS message_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, detail TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        await db.execute("CREATE TABLE IF NOT EXISTS global_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+        try: await db.execute("ALTER TABLE filter_rules ADD COLUMN is_case_sensitive INTEGER DEFAULT 0")
         except Exception: pass
-            
         await db.execute("CREATE INDEX IF NOT EXISTS idx_source_msg ON message_mappings(source_channel_id, source_msg_id)")
         await db.commit()
 
-        # 初始化默认消息类型全开
-        default_settings = {
-            "sync_text": "1", "sync_photo": "1", "sync_video": "1", 
-            "sync_document": "1", "sync_sticker": "1", "sync_gif": "1",
-            "sync_audio": "1", "sync_voice": "1"
-        }
-        for k, v in default_settings.items():
-            await db.execute("INSERT OR IGNORE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, v))
+        default_settings = {"sync_text": "1", "sync_photo": "1", "sync_video": "1", "sync_document": "1", "sync_sticker": "1", "sync_gif": "1", "sync_audio": "1", "sync_voice": "1"}
+        for k, v in default_settings.items(): await db.execute("INSERT OR IGNORE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, v))
         await db.commit()
 
 async def add_channel_mapping(source_id: int, target_id: int):
@@ -111,55 +59,46 @@ async def is_message_synced(source_channel_id: int, source_msg_id: int) -> bool:
         row = await cursor.fetchone()
         return row is not None
 
+# ================= 增量日志查询 (专供 SSE 流使用) =================
 async def add_log(level: str, message: str):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("INSERT INTO system_logs (level, message) VALUES (?, ?)", (level, message))
         await db.commit()
 
-async def get_recent_logs(limit: int = 200) -> list:
+async def get_sys_logs_after(last_id: int) -> list:
     async with aiosqlite.connect(DB_FILE) as db:
-        cursor = await db.execute("SELECT datetime(created_at, 'localtime'), level, message FROM system_logs ORDER BY created_at DESC LIMIT ?", (limit,))
+        cursor = await db.execute("SELECT id, datetime(created_at, 'localtime'), level, message FROM system_logs WHERE id > ? ORDER BY id DESC LIMIT 50", (last_id,))
         return await cursor.fetchall()
 
-# --- 消息流水日志 ---
 async def add_msg_log(action: str, detail: str):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("INSERT INTO message_logs (action, detail) VALUES (?, ?)", (action, detail))
         await db.commit()
 
-async def get_recent_msg_logs(limit: int = 200) -> list:
+async def get_msg_logs_after(last_id: int) -> list:
     async with aiosqlite.connect(DB_FILE) as db:
-        cursor = await db.execute("SELECT datetime(created_at, 'localtime'), action, detail FROM message_logs ORDER BY created_at DESC LIMIT ?", (limit,))
+        cursor = await db.execute("SELECT id, datetime(created_at, 'localtime'), action, detail FROM message_logs WHERE id > ? ORDER BY id DESC LIMIT 50", (last_id,))
         return await cursor.fetchall()
 
-# --- 全局设置存取 ---
 async def get_all_settings() -> dict:
     async with aiosqlite.connect(DB_FILE) as db:
         cursor = await db.execute("SELECT setting_key, setting_value FROM global_settings")
-        rows = await cursor.fetchall()
-        return {k: v for k, v in rows}
+        return {k: v for k, v in await cursor.fetchall()}
 
 async def update_settings(settings: dict):
     async with aiosqlite.connect(DB_FILE) as db:
-        for k, v in settings.items():
-            await db.execute("INSERT OR REPLACE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, str(v)))
+        for k, v in settings.items(): await db.execute("INSERT OR REPLACE INTO global_settings (setting_key, setting_value) VALUES (?, ?)", (k, str(v)))
         await db.commit()
 
-# --- 正则与类型核心算法 ---
 async def add_filter_rule(rule_type: str, pattern: str, replacement: str = "", is_case_sensitive: int = 0):
     async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("INSERT INTO filter_rules (rule_type, pattern, replacement, is_case_sensitive) VALUES (?, ?, ?, ?)", 
-                         (rule_type, pattern, replacement, is_case_sensitive))
+        await db.execute("INSERT INTO filter_rules (rule_type, pattern, replacement, is_case_sensitive) VALUES (?, ?, ?, ?)", (rule_type, pattern, replacement, is_case_sensitive))
         await db.commit()
 
 async def get_all_filter_rules() -> list:
     async with aiosqlite.connect(DB_FILE) as db:
-        try:
-            cursor = await db.execute("SELECT id, rule_type, pattern, replacement, is_case_sensitive FROM filter_rules")
-            return await cursor.fetchall()
-        except Exception:
-            cursor = await db.execute("SELECT id, rule_type, pattern, replacement FROM filter_rules")
-            return [(r[0], r[1], r[2], r[3], 0) for r in await cursor.fetchall()]
+        cursor = await db.execute("SELECT id, rule_type, pattern, replacement, is_case_sensitive FROM filter_rules")
+        return await cursor.fetchall()
 
 async def delete_filter_rule(rule_id: int):
     async with aiosqlite.connect(DB_FILE) as db:
@@ -170,9 +109,8 @@ async def apply_message_filters(text_html: str, has_media: bool, file_name: str)
     rules = await get_all_filter_rules()
     should_skip = False
     new_text = text_html or ""
-
     for r in rules:
-        r_id, r_type, pattern, replacement, is_case_sensitive = r
+        _, r_type, pattern, replacement, is_case_sensitive = r
         flags = 0 if is_case_sensitive else re.IGNORECASE
         try:
             regex = re.compile(pattern, flags)
@@ -182,5 +120,4 @@ async def apply_message_filters(text_html: str, has_media: bool, file_name: str)
             elif r_type in ['replace', 'replace_text']:
                 if new_text: new_text = regex.sub(replacement or "", new_text)
         except re.error: continue
-
     return should_skip, new_text

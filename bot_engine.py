@@ -11,40 +11,29 @@ import database as db
 
 load_dotenv()
 
-api_id_raw = os.getenv("API_ID", "0").strip()
-API_ID = int(api_id_raw) if api_id_raw.isdigit() else 0
+API_ID = int(os.getenv("API_ID", "0").strip() or 0)
 API_HASH = os.getenv("API_HASH", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+if not BOT_TOKEN: raise ValueError("❌ 错误：未在 .env 中找到 BOT_TOKEN。")
 
-if not BOT_TOKEN: raise ValueError("❌ 错误：未在 .env 中找到 BOT_TOKEN，请检查配置。")
-
-# 核心修复：大幅提升 Aiogram 的会话超时时间至 1 小时，解决上传文件报 Request timeout error 的问题
 session = AiohttpSession(timeout=3600)
 aiogram_bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 media_group_cache = {}
 
-def get_chat_name(chat):
-    if chat.username: return f"@{chat.username}"
-    return chat.title or str(chat.id)
+def get_chat_name(chat): return f"@{chat.username}" if chat.username else (chat.title or str(chat.id))
 
+# ================= 核心：数据驱动解耦 =================
+MSG_TYPES = ['photo', 'video', 'animation', 'audio', 'voice', 'sticker', 'document']
 def get_msg_type(msg: Message) -> str:
-    if msg.photo: return 'photo'
-    if msg.video: return 'video'
-    if msg.animation: return 'gif'
-    if msg.audio: return 'audio'
-    if msg.voice: return 'voice'
-    if msg.sticker: return 'sticker'
-    if msg.document: return 'document'
-    return 'text'
+    return next((t for t in MSG_TYPES if getattr(msg, t, None)), 'text')
 
 async def is_type_allowed(msg_type: str) -> bool:
     settings = await db.get_all_settings()
-    key_map = {'photo':'sync_photo', 'video':'sync_video', 'gif':'sync_gif', 
-               'audio':'sync_audio', 'voice':'sync_voice', 'sticker':'sync_sticker', 
-               'document':'sync_document', 'text':'sync_text'}
+    key_map = {t: f'sync_{t}' for t in MSG_TYPES}
+    key_map['animation'] = 'sync_gif'
     return settings.get(key_map.get(msg_type, 'sync_text'), "1") == "1"
 
 @dp.channel_post()
@@ -66,97 +55,76 @@ async def handle_new_post(message: Message):
             media_group_cache[mg_id] = [message]
             await asyncio.sleep(2)
             if mg_id in media_group_cache:
-                group = media_group_cache.pop(mg_id)
-                group.sort(key=lambda m: m.message_id) 
-                
-                should_skip_group = False
+                group = sorted(media_group_cache.pop(mg_id), key=lambda m: m.message_id)
                 for m in group:
                     t_html = m.html_text if m.text or m.caption else ""
                     f_name = m.document.file_name if m.document else (m.video.file_name if m.video else "")
                     s_skip, _ = await db.apply_message_filters(t_html, True, f_name or "")
                     if s_skip:
-                        should_skip_group = True; break
-                
-                msg_ids = [m.message_id for m in group]
-                if should_skip_group:
-                    await db.add_msg_log("DROP_REGEX", f"源: [{chat_name}] 组IDs:{msg_ids} | 命中正则屏蔽")
-                    return
+                        await db.add_msg_log("DROP_REGEX", f"源: [{chat_name}] 组IDs:{[m.message_id for m in group]} | 命中正则")
+                        return
 
-                await db.add_msg_log("RECV_GROUP", f"源: [{chat_name}] 组IDs:{msg_ids} | 接收相册打包")
-                success = False
-                for attempt in range(3):
-                    try:
-                        copied_ids = await aiogram_bot.copy_messages(chat_id=target_id, from_chat_id=source_id, message_ids=msg_ids)
-                        for orig_m, new_m in zip(group, copied_ids): await db.save_msg_mapping(source_id, orig_m.message_id, new_m.message_id)
-                        await db.add_msg_log("SEND_GROUP", f"目标: [{target_id}] 组IDs:{[m.message_id for m in copied_ids]} | 相册转发成功")
-                        success = True; break
-                    except TelegramRetryAfter as e: await asyncio.sleep(e.retry_after)
-                    except Exception as e: break 
-                        
-                if not success:
-                    await db.add_msg_log("WARN", f"源: [{chat_name}] | 相册转发失败，降级单条拆散")
+                msg_ids = [m.message_id for m in group]
+                await db.add_msg_log("RECV_GROUP", f"源: [{chat_name}] 组IDs:{msg_ids} | 接收相册")
+                try:
+                    copied_ids = await aiogram_bot.copy_messages(chat_id=target_id, from_chat_id=source_id, message_ids=msg_ids)
+                    for orig_m, new_m in zip(group, copied_ids): await db.save_msg_mapping(source_id, orig_m.message_id, new_m.message_id)
+                    await db.add_msg_log("SEND_GROUP", f"目标: [{target_id}] | 相册转发成功")
+                except Exception as e:
+                    await db.add_msg_log("WARN", f"相册转发失败，降级单条拆散")
                     for m in group:
                         try:
                             copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=m.message_id)
                             await db.save_msg_mapping(source_id, m.message_id, copied.message_id)
                             await asyncio.sleep(1)
-                        except Exception: pass
+                        except: pass
         else: media_group_cache[mg_id].append(message)
         return
 
-    has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'voice', 'animation']
-    file_name = message.document.file_name if message.document else (message.video.file_name if message.video else "")
+    has_media = msg_type != 'text'
+    file_name = getattr(getattr(message, msg_type, None), 'file_name', "") if msg_type in ['document', 'video'] else ""
     text_html = message.html_text if message.text or message.caption else ""
     
-    await db.add_msg_log("RECV", f"源: [{chat_name}] ID:{message.message_id} | 类型:{msg_type.upper()} | 内容:{text_html[:30]}")
+    await db.add_msg_log("RECV", f"源: [{chat_name}] ID:{message.message_id} | 类型:{msg_type.upper()}")
 
-    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
-    if should_skip:
-        await db.add_msg_log("DROP_REGEX", f"源: [{chat_name}] ID:{message.message_id} | 命中正则屏蔽")
-        return
-    if not has_media and not new_html.strip():
-        await db.add_msg_log("DROP_EMPTY", f"源: [{chat_name}] ID:{message.message_id} | 文本替换后为空")
+    should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name)
+    if should_skip or (not has_media and not new_html.strip()):
+        await db.add_msg_log("DROP_REGEX", f"源: [{chat_name}] ID:{message.message_id} | 被正则或空文本拦截")
         return
 
-    for attempt in range(3):
-        try:
-            if new_html != text_html:
-                if not has_media: copied = await aiogram_bot.send_message(target_id, text=new_html, parse_mode="HTML")
-                else: copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id, caption=new_html, parse_mode="HTML")
-            else:
-                copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
-            
-            await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
-            await db.add_msg_log("SEND", f"目标: [{target_id}] 新ID:{copied.message_id} | 转发成功")
-            break
-        except TelegramRetryAfter as e: await asyncio.sleep(e.retry_after)
-        except Exception as e:
-            await db.add_msg_log("ERROR", f"发送失败 ID:{message.message_id} | 报错:{e}")
-            break
+    try:
+        if new_html != text_html:
+            kwargs = {"chat_id": target_id, "parse_mode": "HTML"}
+            if not has_media: kwargs["text"] = new_html
+            else: kwargs.update({"from_chat_id": source_id, "message_id": message.message_id, "caption": new_html})
+            copied = await (aiogram_bot.send_message(**kwargs) if not has_media else aiogram_bot.copy_message(**kwargs))
+        else:
+            copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
+        
+        await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
+        await db.add_msg_log("SEND", f"目标: [{target_id}] 新ID:{copied.message_id} | 转发成功")
+    except Exception as e:
+        await db.add_msg_log("ERROR", f"发送失败 ID:{message.message_id} | {e}")
 
 @dp.edited_channel_post()
 async def handle_edited_post(message: Message):
-    source_id = message.chat.id
+    source_id, msg_id = message.chat.id, message.message_id
     target_id = await db.get_target_channel(source_id)
-    if not target_id: return
-    target_msg_id = await db.get_target_msg_id(source_id, message.message_id)
+    target_msg_id = await db.get_target_msg_id(source_id, msg_id) if target_id else None
     if not target_msg_id: return
 
-    text_html = message.html_text if message.text or message.caption else ""
-    has_media = message.content_type in ['photo', 'video', 'document', 'audio', 'voice', 'animation']
-    should_skip, new_html = await db.apply_message_filters(text_html, has_media, "")
+    has_media = get_msg_type(message) != 'text'
+    should_skip, new_html = await db.apply_message_filters(message.html_text if message.text or message.caption else "", has_media, "")
     if should_skip: return 
 
     try:
-        if message.text: await aiogram_bot.edit_message_text(chat_id=target_id, message_id=target_msg_id, text=new_html, parse_mode="HTML")
-        elif message.caption is not None: await aiogram_bot.edit_message_caption(chat_id=target_id, message_id=target_msg_id, caption=new_html, parse_mode="HTML")
-        await db.add_msg_log("EDIT", f"已同步修改 源ID:{message.message_id} -> 目标ID:{target_msg_id}")
+        kwargs = {"chat_id": target_id, "message_id": target_msg_id, "parse_mode": "HTML"}
+        if message.text: await aiogram_bot.edit_message_text(text=new_html, **kwargs)
+        else: await aiogram_bot.edit_message_caption(caption=new_html, **kwargs)
+        await db.add_msg_log("EDIT", f"同步修改 源ID:{msg_id} -> 目标ID:{target_msg_id}")
     except Exception: pass
 
 pyro_user_app = None
 def init_user_client():
     global pyro_user_app
-    if API_ID and API_HASH:
-        pyro_user_app = Client("sync_user_session", api_id=API_ID, api_hash=API_HASH, ipv6=False)
-        return pyro_user_app
-    return None
+    if API_ID and API_HASH: pyro_user_app = Client("sync_user_session", api_id=API_ID, api_hash=API_HASH, ipv6=False)
