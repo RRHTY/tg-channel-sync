@@ -5,7 +5,8 @@
 
 [GitHub 仓库](https://github.com/RRHTY/tg-channel-sync)
 
-<img width="1376" height="1182" alt="image" src="https://github.com/user-attachments/assets/f24db856-036c-4000-bed9-f1bcb9db854d" />
+<img width="1492" height="1297" alt="image" src="https://github.com/user-attachments/assets/0bd8551e-6160-4b04-baf2-3635d089aa02" />
+
 <img width="1194" height="1002" alt="image" src="https://github.com/user-attachments/assets/87c66f35-dde2-4afc-b7df-1534b56d8032" />
 
 -----
