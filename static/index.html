@@ -30,12 +30,6 @@
                 <span v-if="appInfo.user.name" class="text-sm font-normal text-purple-600 flex items-center bg-purple-50 px-2 py-1 rounded">👤 {{ appInfo.user.name }}</span>
             </div>
         </div>
-        <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2 border-l border-gray-300 pl-4">
-                <button @click="restartServer" class="text-xs bg-gray-200 text-gray-700 px-2 py-1.5 rounded hover:bg-gray-300 transition font-medium">🔄 重启服务</button>
-                <button @click="stopServer" class="text-xs bg-red-100 text-red-700 px-2 py-1.5 rounded hover:bg-red-200 transition font-medium">🛑 强制关闭</button>
-            </div>
-        </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
