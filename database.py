@@ -75,6 +75,11 @@ async def add_msg_log(action: str, detail: str):
         await db.execute("INSERT INTO message_logs (action, detail) VALUES (?, ?)", (action, detail))
         await db.commit()
 
+async def add_sys_log(level: str, message: str):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("INSERT INTO system_logs (level, message) VALUES (?, ?)", (level, message))
+        await db.commit()
+
 async def get_msg_logs_after(last_id: int) -> list:
     async with aiosqlite.connect(DB_FILE) as db:
         cursor = await db.execute("SELECT id, datetime(created_at, 'localtime'), action, detail FROM message_logs WHERE id > ? ORDER BY id DESC LIMIT 50", (last_id,))

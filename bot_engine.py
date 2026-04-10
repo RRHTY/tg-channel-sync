@@ -69,7 +69,7 @@ async def handle_new_post(message: Message):
                 try:
                     copied_ids = await aiogram_bot.copy_messages(chat_id=target_id, from_chat_id=source_id, message_ids=msg_ids)
                     for orig_m, new_m in zip(group, copied_ids): await db.save_msg_mapping(source_id, orig_m.message_id, new_m.message_id)
-                    await db.add_msg_log("SEND_GROUP", f"目标: [{target_id}] | 相册转发成功")
+                    await db.add_msg_log("SEND_GROUP", f"原始:[{source_id}] 组IDs:{msg_ids} | 目标:[{target_id}] 新组IDs:{copied_ids} | 相册转发成功")
                 except Exception as e:
                     await db.add_msg_log("WARN", f"相册转发失败，降级单条拆散")
                     for m in group:
@@ -102,7 +102,7 @@ async def handle_new_post(message: Message):
             copied = await aiogram_bot.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=message.message_id)
         
         await db.save_msg_mapping(source_id, message.message_id, copied.message_id)
-        await db.add_msg_log("SEND", f"目标: [{target_id}] 新ID:{copied.message_id} | 转发成功")
+        await db.add_msg_log("SEND", f"原始:[{source_id}] 消息ID:{message.message_id} | 目标:[{target_id}] 新ID:{copied.message_id} | 转发成功")
     except Exception as e:
         await db.add_msg_log("ERROR", f"发送失败 ID:{message.message_id} | {e}")
 

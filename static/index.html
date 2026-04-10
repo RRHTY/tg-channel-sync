@@ -6,23 +6,14 @@
     <title>杏铃同步台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <style>
-        body { background-color: #f3f4f6; }
-        .card { background-color: white; border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 1.5rem; margin-bottom: 1.5rem; }
-        .log-container::-webkit-scrollbar { width: 6px; }
-        .log-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
-        .btn-primary { background-color: #4f46e5; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; transition: background-color 0.2s; width: 100%; font-weight: 600; display: flex; justify-content: center; align-items: center; gap: 0.25rem; }
-        .btn-primary:hover { background-color: #4338ca; }
-        .input-box { width: 100%; border: 1px solid #d1d5db; border-radius: 0.375rem; padding: 0.5rem; font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
-        .input-box:focus { border-color: #6366f1; }
-    </style>
+    <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="text-gray-800 p-8 font-sans">
 
 <div id="app" class="max-w-6xl mx-auto">
     <div class="flex justify-between items-center mb-8 border-b border-gray-200 pb-4">
         <div class="flex items-center gap-4">
-            <h1 class="text-2xl font-bold text-gray-900">杏铃同步台 <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded ml-2 align-middle">SSE Edition</span></h1>
+            <h1 class="text-2xl font-bold text-gray-900">杏铃同步台</h1>
             <div class="flex gap-2">
                 <a v-if="appInfo.bot.username" :href="'https://t.me/' + appInfo.bot.username" target="_blank" class="text-sm font-normal text-blue-600 hover:text-blue-800 hover:underline flex items-center bg-blue-50 px-2 py-1 rounded transition">
                     🤖 {{ appInfo.bot.name }} (@{{ appInfo.bot.username }})
@@ -35,11 +26,11 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="space-y-6">
             <channel-mapping :mappings="mappings" @add="addMapping" @del="deleteMapping"></channel-mapping>
-            <sync-panel :status="syncStatus" :form="syncForm" @start="startSync" @stop="stopSync"></sync-panel>
+            <sync-panel :status="syncStatus" :form="syncForm" :stopping="stopping" @start="startSync" @stop="stopSync"></sync-panel>
         </div>
 
         <div class="space-y-6">
-            <global-filters 
+            <global-filters
                 :settings="settings" :rules="filterRules" :new-rule="newFilter"
                 @save-settings="saveSettings" @add-rule="addFilter" @del-rule="deleteFilter">
             </global-filters>
@@ -49,195 +40,6 @@
     <log-viewer :sys-logs="sysLogs" :msg-logs="msgLogs"></log-viewer>
 </div>
 
-<script>
-const { createApp } = Vue;
-
-const ChannelMapping = {
-    props: ['mappings'],
-    data() { return { source: '', target: '' } },
-    template: `
-        <div class="card">
-            <h2 class="text-lg font-semibold mb-4 border-b pb-2">基础频道映射 <span class="text-xs font-normal text-blue-500 ml-2">💡 支持 @用户名</span></h2>
-            <div class="space-y-3">
-                <input v-model="source" type="text" placeholder="源频道: -100 ID 或 @频道名" class="input-box">
-                <input v-model="target" type="text" placeholder="目标频道: -100 ID 或 @频道名" class="input-box">
-                <button @click="$emit('add', source, target); source=''; target='';" class="btn-primary">保存规则</button>
-            </div>
-            <ul class="mt-4 space-y-2 text-sm">
-                <li v-for="map in mappings" :key="map.source_id" class="flex justify-between p-2 bg-gray-50 rounded group">
-                    <div class="flex-1 flex justify-between px-2 font-mono"><span>{{ map.source_id }}</span><span class="text-gray-400">→</span><span>{{ map.target_id }}</span></div>
-                    <button @click="$emit('del', map.source_id)" class="text-red-500 opacity-0 group-hover:opacity-100 px-2">删除</button>
-                </li>
-            </ul>
-        </div>
-    `
-};
-
-const GlobalFilters = {
-    props: ['settings', 'rules', 'newRule'],
-    template: `
-        <div class="card border-t-4 border-indigo-500 bg-gray-50/50">
-            <h2 class="text-lg font-semibold mb-5 flex items-center gap-2 border-b pb-3">全局过滤系统</h2>
-            <div class="bg-white p-4 rounded-lg mb-6 border border-gray-200 shadow-sm">
-                <h3 class="text-sm font-bold text-gray-800 mb-4">✅ 允许同步的消息类型 (反选拦截)</h3>
-                <div class="grid grid-cols-4 gap-y-4 gap-x-2 mb-5">
-                    <label v-for="(label, key) in {'sync_text':'📝 文本','sync_photo':'🖼️ 图片','sync_video':'🎬 视频','sync_document':'📁 文件','sync_audio':'🎵 音乐','sync_voice':'🎤 语音','sync_sticker':'🏷️ 贴纸','sync_gif':'🎞️ 动图'}" class="flex items-center text-sm cursor-pointer hover:text-blue-600">
-                        <input type="checkbox" v-model="settings[key]" true-value="1" false-value="0" class="mr-1.5 w-4 h-4"> {{ label }}
-                    </label>
-                </div>
-                <button @click="$emit('save-settings', settings)" class="btn-primary bg-blue-500 hover:bg-blue-600">💾 保存类型配置</button>
-            </div>
-
-            <div class="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-                <h3 class="text-sm font-bold text-gray-800 mb-4">🛡️ 正则匹配规则配置</h3>
-                <div class="space-y-3 mb-5">
-                    <select v-model="newRule.rule_type" class="input-box bg-white"><option value="replace">🎯 仅替换文本</option><option value="drop">💣 连带图文屏蔽整条消息</option></select>
-                    <input v-model="newRule.pattern" type="text" placeholder="正则表达式 (如: 广告.*直达)" class="input-box font-mono">
-                    <input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" type="text" placeholder="替换成的内容 (留空则删除)" class="input-box">
-                    <label class="flex items-center text-sm"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0" class="mr-2"> 区分大小写</label>
-                    <button @click="$emit('add-rule', newRule)" class="btn-primary">➕ 添加正则规则</button>
-                </div>
-                <ul class="space-y-2 text-sm border-t pt-4">
-                    <li v-for="r in rules" :key="r.id" class="flex justify-between p-2 bg-gray-50 rounded group">
-                        <span class="truncate font-mono">{{ r.pattern }} <span v-if="r.rule_type==='replace'" class="text-green-600">→ {{r.replacement||'(抹除)'}}</span></span>
-                        <button @click="$emit('del-rule', r.id)" class="text-red-500 opacity-0 group-hover:opacity-100">删除</button>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    `
-};
-
-const SyncPanel = {
-    props: ['status', 'form'],
-    template: `
-        <div class="card bg-blue-50/50 border-t-4 border-blue-500">
-            <h2 class="text-lg font-semibold mb-4 border-b pb-2">🚀 历史数据全能同步</h2>
-            <div v-if="status.is_syncing" class="mb-6 p-4 bg-white rounded shadow-sm">
-                <div class="flex justify-between text-sm mb-1"><span class="font-medium text-blue-700">运行中: {{status.mode}}</span><span>{{status.current}} / {{status.total}}</span></div>
-                <div class="w-full bg-gray-200 rounded-full h-2 mb-3"><div class="bg-blue-600 h-2 rounded-full transition-all" :style="{width: (status.total>0?status.current/status.total*100:0)+'%'}"></div></div>
-                <div class="text-xs text-gray-500"><p>📢 跳过: {{status.skipped}}</p><p class="truncate text-blue-500 font-bold mt-1">💬 {{status.current_text}}</p></div>
-            </div>
-            <div class="space-y-4" :class="{'opacity-50 pointer-events-none': status.is_syncing}">
-                <div class="flex gap-2"><input v-model="form.source_id" placeholder="源频道" class="input-box"><input v-model="form.target_id" placeholder="目标频道" class="input-box"></div>
-                <div class="flex bg-white rounded-lg border p-1">
-                    <button @click="form.mode='json'" :class="form.mode==='json'?'bg-blue-100 text-blue-700 font-semibold':'text-gray-500'" class="flex-1 py-1 text-sm rounded">JSON导入</button>
-                    <button @click="form.mode='api'" :class="form.mode==='api'?'bg-purple-100 text-purple-700 font-semibold':'text-gray-500'" class="flex-1 py-1 text-sm rounded">API复制</button>
-                    <button @click="form.mode='clone'" :class="form.mode==='clone'?'bg-emerald-100 text-emerald-700 font-semibold':'text-gray-500'" class="flex-1 py-1 text-sm rounded">API克隆</button>
-                </div>
-                <div v-if="form.mode==='clone'" class="bg-white p-3 rounded border text-sm">
-                    <b>发送身份:</b> 
-                    <label><input type="radio" v-model="form.sender" value="bot" class="ml-2 mr-1">机器人</label>
-                    <label><input type="radio" v-model="form.sender" value="user" class="ml-4 mr-1">辅助账号</label>
-                </div>
-                <div v-if="form.mode==='api'||form.mode==='clone'" class="flex gap-2"><input v-model="form.start_id" type="number" placeholder="起始ID" class="input-box"><input v-model="form.end_id" type="number" placeholder="结束ID" class="input-box"></div>
-                <div v-if="form.mode==='json'"><input v-model="form.json_path" placeholder="JSON路径" class="input-box"></div>
-                <div><label class="text-xs">单条处理延时(秒):</label><input v-model="form.delay" type="number" step="0.5" class="input-box"></div>
-            </div>
-            <button v-if="!status.is_syncing" @click="$emit('start', form)" class="btn-primary mt-4 bg-gray-800 hover:bg-gray-900">🚀 启动 {{form.mode.toUpperCase()}} 任务</button>
-            <button v-else @click="$emit('stop')" class="btn-primary mt-4 bg-red-600 hover:bg-red-700">🛑 瞬间强制中断任务</button>
-        </div>
-    `
-};
-
-const LogViewer = {
-    props: ['sysLogs', 'msgLogs'],
-    template: `
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
-            <div class="card"><h2 class="text-sm font-bold text-gray-600 mb-2">🛠️ 系统状态日志</h2>
-                <div class="bg-slate-900 p-3 rounded h-80 overflow-y-auto text-xs font-mono space-y-1">
-                    <div v-for="l in sysLogs" :key="l.id" :class="{'text-red-400':l.level==='ERROR','text-yellow-400':l.level==='WARNING','text-green-400':l.level==='SUCCESS','text-gray-300':l.level==='INFO'}" class="border-b border-slate-800 pb-1">
-                        <span class="text-slate-500">[{{l.time}}]</span> [{{l.level}}] {{l.msg}}
-                    </div>
-                </div>
-            </div>
-            <div class="card"><h2 class="text-sm font-bold text-indigo-600 mb-2">💬 详细流水流</h2>
-                <div class="bg-indigo-950 p-3 rounded h-80 overflow-y-auto text-xs font-mono space-y-1">
-                    <div v-for="l in msgLogs" :key="l.id" :class="{'text-pink-300':l.action.includes('DROP')||l.action.includes('WARN'),'text-emerald-300':l.action.includes('SEND'),'text-indigo-200':l.action.includes('RECV')}" class="border-b border-indigo-900/50 pb-1">
-                        <span class="text-indigo-400 opacity-60">[{{l.time}}]</span> [{{l.action}}] {{l.detail}}
-                    </div>
-                </div>
-            </div>
-        </div>
-    `
-};
-
-const app = createApp({
-    data() {
-        return {
-            appInfo: { bot:{}, user:{} }, mappings: [], filterRules: [],
-            newFilter: { rule_type: 'replace', pattern: '', replacement: '', is_case_sensitive: 0 },
-            settings: { sync_text: '1', sync_photo: '1', sync_video: '1', sync_document: '1', sync_audio: '1', sync_voice: '1', sync_sticker: '1', sync_gif: '1' },
-            syncForm: { mode: 'api', sender: 'bot', source_id: '', target_id: '', start_id: '', end_id: '', json_path: '', delay: 5 },
-            syncStatus: { is_syncing: false, mode: '', total: 0, current: 0 },
-            sysLogs: [], msgLogs: [], sseConnection: null
-        }
-    },
-    mounted() {
-        this.fetchAppInfo(); this.loadMappings(); this.loadFilters(); this.loadSettings();
-        this.setupSSE(); 
-    },
-    methods: {
-        showToast(msg) { alert(msg); },
-        setupSSE() {
-            this.sseConnection = new EventSource('/api/stream');
-            this.sseConnection.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                this.syncStatus = data.status;
-                if(data.sys_logs) this.sysLogs = [...data.sys_logs, ...this.sysLogs].slice(0, 200);
-                if(data.msg_logs) this.msgLogs = [...data.msg_logs, ...this.msgLogs].slice(0, 200);
-            };
-        },
-        async fetchAppInfo() { this.appInfo = await (await fetch('/api/app_info')).json(); },
-        async loadMappings() { this.mappings = await (await fetch('/api/mappings')).json(); },
-        async loadFilters() { this.filterRules = await (await fetch('/api/filter_rules')).json(); },
-        async loadSettings() { const r = await (await fetch('/api/global_settings')).json(); Object.keys(this.settings).forEach(k => {if(r[k]!==undefined) this.settings[k]=r[k]}); },
-        async saveSettings(silent = false) {
-            const fd = new FormData(); Object.keys(this.settings).forEach(k => fd.append(k, this.settings[k]));
-            const res = await (await fetch('/api/global_settings', { method: 'POST', body: fd })).json();
-            if (!silent) this.showToast(res.message);
-        },
-        async addMapping(s, t) {
-            const fd = new FormData(); fd.append('source_id', s); fd.append('target_id', t);
-            await fetch('/api/mappings', { method: 'POST', body: fd }); this.loadMappings();
-        },
-        async deleteMapping(id) { await fetch(`/api/mappings/${id}`, { method: 'DELETE' }); this.loadMappings(); },
-        async addFilter(rule) {
-            const fd = new FormData(); Object.keys(rule).forEach(k => fd.append(k, rule[k]));
-            await fetch('/api/filter_rules', { method: 'POST', body: fd }); this.loadFilters();
-            this.newFilter = { rule_type: 'replace', pattern: '', replacement: '', is_case_sensitive: 0 };
-        },
-        async deleteFilter(id) { await fetch(`/api/filter_rules/${id}`, { method: 'DELETE' }); this.loadFilters(); },
-        
-        async stopServer() { 
-            if(confirm("这将会瞬间切断底层网络释放端口，后台进程将被安全处死。\n\n确定强制关闭吗？")) {
-                if(this.sseConnection) this.sseConnection.close();
-                await fetch('/api/server/stop', { method: 'POST' }); 
-            }
-        },
-        async restartServer() { 
-            if(confirm("这将会瞬间斩断旧进程，重新拉起新的服务进程。\n\n确定重启吗？")) { 
-                if(this.sseConnection) this.sseConnection.close();
-                await fetch('/api/server/restart', { method: 'POST' }); 
-                // 核心修复：给操作系统留出 4 秒时间释放旧端口并完全拉起新服务
-                setTimeout(()=>location.reload(), 4000); 
-            } 
-        },
-        async startSync(form) {
-            await this.saveSettings(true);
-            const fd = new FormData(); Object.keys(form).forEach(k => fd.append(k, form[k]||(k.includes('id')?'0':'')));
-            const res = await (await fetch('/api/start_sync', { method: 'POST', body: fd })).json();
-            if (res.status === 'error') this.showToast(res.message);
-        },
-        async stopSync() { await fetch('/api/stop_sync', { method: 'POST' }); }
-    }
-});
-
-app.component('channel-mapping', ChannelMapping);
-app.component('global-filters', GlobalFilters);
-app.component('sync-panel', SyncPanel);
-app.component('log-viewer', LogViewer);
-app.mount('#app');
-</script>
+<script src="/static/app.js"></script>
 </body>
 </html>

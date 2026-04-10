@@ -31,8 +31,9 @@ sync_state = {
     "current_link": "", "skipped": 0, "stop_requested": False, "source_id_raw": "", 
     "target_id_raw": "", "delay": 5, "start_id": "", "end_id": "", "json_path": ""
 }
-polling_task, TEMP_DIR = None, "temp"
+polling_task, TEMP_DIR, _cleanup_done = None, "temp", False
 SHUTDOWN_EVENT = asyncio.Event()
+_sse_disconnect_callbacks = {}
 
 # ================= 核心升级：独立且绝对安全的资源释放函数 =================
 async def _force_cleanup():
@@ -71,10 +72,14 @@ async def lifespan(app: FastAPI):
         
     yield
     
-    # 终端按下 Ctrl+C 时触发的正常关机流
     print("\n⏳ 收到关机信号，正在安全释放系统资源...")
-    if not SHUTDOWN_EVENT.is_set():
-        await _force_cleanup()
+    SHUTDOWN_EVENT.set()
+    try:
+        if not _cleanup_done:
+            _cleanup_done = True
+            await _force_cleanup()
+    except (asyncio.CancelledError, RuntimeError):
+        pass
     print("👋 系统已完全退出")
 
 app = FastAPI(title="杏铃同步台", lifespan=lifespan)
@@ -95,46 +100,58 @@ async def sse_stream(request: Request):
         if sys_logs: last_sys_id = sys_logs[0][0]
         if msg_logs: last_msg_id = msg_logs[0][0]
         
-        while not SHUTDOWN_EVENT.is_set():
-            if await request.is_disconnected(): break
-            payload = {"status": sync_state}
-            new_sys = await db.get_sys_logs_after(last_sys_id)
-            if new_sys:
-                last_sys_id = new_sys[0][0]
-                payload["sys_logs"] = [{"id": r[0], "time": r[1], "level": r[2], "msg": r[3]} for r in reversed(new_sys)]
-            new_msg = await db.get_msg_logs_after(last_msg_id)
-            if new_msg:
-                last_msg_id = new_msg[0][0]
-                payload["msg_logs"] = [{"id": r[0], "time": r[1], "action": r[2], "detail": r[3]} for r in reversed(new_msg)]
-                
-            yield f"data: {json.dumps(payload)}\n\n"
-            try: await asyncio.sleep(1)
-            except asyncio.CancelledError: break
+        try:
+            while not SHUTDOWN_EVENT.is_set():
+                if await request.is_disconnected(): break
+                payload = {"status": sync_state}
+                new_sys = await db.get_sys_logs_after(last_sys_id)
+                if new_sys:
+                    last_sys_id = new_sys[0][0]
+                    payload["sys_logs"] = [{"id": r[0], "time": r[1], "level": r[2], "msg": r[3]} for r in reversed(new_sys)]
+                new_msg = await db.get_msg_logs_after(last_msg_id)
+                if new_msg:
+                    last_msg_id = new_msg[0][0]
+                    payload["msg_logs"] = [{"id": r[0], "time": r[1], "action": r[2], "detail": r[3]} for r in reversed(new_msg)]
+                    
+                yield f"data: {json.dumps(payload)}\n\n"
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if request.is_disconnected():
+                pass
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # ================= 核心升级：影子进程控制架构 =================
 @app.post("/api/server/stop")
 async def stop_server():
     async def shutdown():
+        global _cleanup_done
+        if _cleanup_done:
+            return
+        _cleanup_done = True
         await _force_cleanup()
         print("🛑 正在强制物理断电释放端口...")
-        os._exit(0) # 物理级切断进程，毫无残留
+        os._exit(0)
     asyncio.create_task(shutdown())
     return {"status": "success", "message": "服务端正在关闭，请稍候关闭此页面..."}
 
 @app.post("/api/server/restart")
 async def restart_server():
     async def restart():
+        global _cleanup_done
+        if _cleanup_done:
+            return
+        _cleanup_done = True
         await _force_cleanup()
         print("🔄 正在移交端口并准备重启...")
-        # 召唤影子进程：让系统等 2 秒(确保旧端口释放)，然后拉起新的 main.py
         if sys.platform == "win32":
             cmd = f'ping 127.0.0.1 -n 3 > nul && "{sys.executable}" ' + ' '.join(f'"{arg}"' for arg in sys.argv)
             subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
         else:
             cmd = f'sleep 2 && "{sys.executable}" ' + ' '.join(f'"{arg}"' for arg in sys.argv)
             subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
-        os._exit(0) # 旧进程光速自杀腾出 8011 端口
+        os._exit(0)
     asyncio.create_task(restart())
     return {"status": "success", "message": "服务端正在重载配置并重启..."}
 
@@ -152,7 +169,10 @@ async def get_mappings(): return [{"source_id": m[0], "target_id": m[1]} for m i
 @app.post("/api/mappings")
 async def add_mapping(source_id: str = Form(...), target_id: str = Form(...)):
     try:
-        await db.add_channel_mapping(await resolve_chat_id(source_id), await resolve_chat_id(target_id))
+        src = await resolve_chat_id(source_id)
+        tgt = await resolve_chat_id(target_id)
+        await db.add_channel_mapping(src, tgt)
+        await db.add_sys_log("INFO", f"添加频道映射: {src} → {tgt}")
         return {"status": "success", "message": "映射规则添加成功"}
     except Exception as e: return {"status": "error", "message": str(e)}
 
@@ -168,6 +188,7 @@ async def get_filter_rules():
 @app.post("/api/filter_rules")
 async def add_filter_rule(rule_type: str = Form(...), pattern: str = Form(...), replacement: str = Form(""), is_case_sensitive: int = Form(0)):
     await db.add_filter_rule(rule_type, pattern, replacement, is_case_sensitive)
+    await db.add_sys_log("INFO", f"添加过滤规则 [{rule_type}]: {pattern}")
     return {"status": "success", "message": "过滤规则添加成功"}
 
 @app.delete("/api/filter_rules/{rule_id}")
@@ -185,6 +206,7 @@ async def update_global_settings(
     sync_audio: str = Form("1"), sync_voice: str = Form("1")
 ):
     await db.update_settings({"sync_text": sync_text, "sync_photo": sync_photo, "sync_video": sync_video, "sync_document": sync_document, "sync_sticker": sync_sticker, "sync_gif": sync_gif, "sync_audio": sync_audio, "sync_voice": sync_voice})
+    await db.add_sys_log("INFO", "全局消息过滤配置已保存")
     return {"status": "success", "message": "全局消息过滤配置已保存"}
 
 @app.post("/api/stop_sync")
@@ -203,6 +225,7 @@ async def start_sync(
     if sync_state["is_syncing"]: return {"status": "error", "message": "任务运行中"}
     if mode in ["api", "clone"] and not bot_engine.pyro_user_app: return {"status": "error", "message": "请配置 API 账号"}
     background_tasks.add_task(process_master_sync, mode, sender, source_id, target_id, delay, start_id, end_id, json_path)
+    await db.add_sys_log("INFO", f"启动 {mode.upper()} 任务: {source_id} → {target_id}")
     return {"status": "success", "message": f"启动 {mode.upper()} 任务"}
 
 TYPE_MAP = {
@@ -364,7 +387,7 @@ async def process_master_sync(mode: str, sender: str, source_id_raw: str, target
                                     except: pass
 
                             await record_success(source_id, msg.id, sent_id)
-                            await db.add_msg_log(f"{mode.upper()}_SEND", f"目标:[{target_id}] 新ID:{sent_id} | 同步成功")
+                            await db.add_msg_log(f"{mode.upper()}_SEND", f"原始:[{source_id}] 消息ID:{msg.id} | 目标:[{target_id}] 新ID:{sent_id} | 同步成功")
                         except Exception as e:
                             if sync_state["stop_requested"]: break
                             await db.add_log("ERROR", f"❌ 单条同步抛出异常 ID {msg.id}: {e}")
