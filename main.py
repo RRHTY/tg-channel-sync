@@ -53,6 +53,10 @@ async def _force_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global polling_task
+    def _sigint_handler(signum, frame):
+        print("\n⏳ 收到关机信号，正在退出...")
+        os._exit(0)
+    signal.signal(signal.SIGINT, _sigint_handler)
     await db.init_db()
     if os.path.exists(TEMP_DIR): shutil.rmtree(TEMP_DIR, ignore_errors=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -80,7 +84,7 @@ async def lifespan(app: FastAPI):
             await _force_cleanup()
     except (asyncio.CancelledError, RuntimeError):
         pass
-    print("👋 系统已完全退出")
+    os._exit(0)
 
 app = FastAPI(title="杏铃同步台", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -118,7 +122,7 @@ async def sse_stream(request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            if request.is_disconnected():
+            if await request.is_disconnected():
                 pass
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -484,4 +488,4 @@ async def handle_floodwait(wait_time):
     await asyncio.sleep(wait_time)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, timeout_keep_alive=0)
