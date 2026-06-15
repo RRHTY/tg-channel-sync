@@ -11,6 +11,36 @@ import webbrowser
 
 _BROWSER_OPEN_LOCK = threading.Lock()
 _BROWSER_OPENED_URLS: set[str] = set()
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8011
+SERVER_HOST_ENV = "TG_SYNC_HOST"
+SERVER_PORT_ENV = "TG_SYNC_PORT"
+
+
+def _normalize_host(value, default: str = DEFAULT_HOST) -> str:
+    normalized = str(value or "").strip()
+    return normalized or default
+
+
+def _normalize_port(value, default: int = DEFAULT_PORT) -> int:
+    try:
+        normalized = int(str(value if value is not None else default).strip() or default)
+    except (TypeError, ValueError):
+        normalized = default
+    return normalized
+
+
+def resolve_server_config(server_cfg: dict) -> dict:
+    file_host = _normalize_host(server_cfg.get("host"), DEFAULT_HOST)
+    file_port = _normalize_port(server_cfg.get("port"), DEFAULT_PORT)
+    host = _normalize_host(os.getenv(SERVER_HOST_ENV), file_host)
+    port = _normalize_port(os.getenv(SERVER_PORT_ENV), file_port)
+    return {
+        **server_cfg,
+        "host": host,
+        "port": port,
+        "auto_open_browser": bool(server_cfg.get("auto_open_browser", False)),
+    }
 
 
 def browser_url(host: str, port: int) -> str:

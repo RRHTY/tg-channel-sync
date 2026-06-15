@@ -120,6 +120,50 @@ Windows x64 推荐直接下载 Release 中已构建完毕的 `full` 版本，无
 2. 打包脚本默认使用当前 `VERSION` 文件内容生成压缩包名称
 3. 媒体指纹扰动采用纯 Python 方式处理，目标是改变基础哈希特征，不保证适用于所有平台或更严格的媒体查重逻辑
 
+### Docker 部署
+
+Docker 部署只负责运行环境、端口监听和数据持久化。Bot Token、API ID、API Hash、代理和同步参数仍通过 Web 前端配置，并保存到宿主机挂载的 `config.json`。
+
+1. 克隆代码仓库并进入目录：
+
+   ```bash
+   git clone https://github.com/RRHTY/tg-channel-sync.git
+   cd tg-channel-sync
+   ```
+
+2. 创建宿主机配置文件和运行目录：
+
+   ```bash
+   touch config.json
+   mkdir -p data temp
+   ```
+
+   Windows PowerShell 可使用：
+
+   ```powershell
+   New-Item -ItemType File -Force config.json
+   New-Item -ItemType Directory -Force data, temp
+   ```
+
+3. 启动服务：
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. 打开 `http://127.0.0.1:8011`，按初始化向导或设置页完成配置。
+
+默认 `docker-compose.yml` 会持久化以下路径：
+
+- `./config.json:/app/config.json`：前端保存的运行配置
+- `./data:/app/data`：数据库、日志和 session
+- `./temp:/app/temp`：下载重传和临时媒体处理目录
+
+Compose 默认将宿主机端口绑定为 `127.0.0.1:8011:8011`，即只允许本机访问。容器内服务通过 `TG_SYNC_HOST=0.0.0.0` 监听，以便 Docker 端口映射正常工作。`TG_SYNC_HOST` 和 `TG_SYNC_PORT` 只影响容器启动时的实际监听地址，不会写入 `config.json`，也不会改变前端设置页保存的业务配置。
+
+> [!WARNING]
+> Web 控制台目前没有内置账号密码鉴权。不要直接将端口绑定到公网地址；如需远程访问，请在外层使用 VPN、带鉴权的反向代理，或 Cloudflare Tunnel 配合 Cloudflare Access 等访问控制方案。
+
 ---
 
 ## 功能矩阵

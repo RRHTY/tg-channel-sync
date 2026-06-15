@@ -1,0 +1,16 @@
+services:
+  tg-channel-sync:
+    build: .
+    container_name: tg-channel-sync
+    restart: always
+    ports:
+      - "127.0.0.1:8011:8011"
+    environment:
+      - TZ=Asia/Shanghai
+      - TG_SYNC_HOST=0.0.0.0
+      - TG_SYNC_PORT=8011
+      - TG_CHANNEL_SYNC_NO_BROWSER=1
+    volumes:
+      - ./config.json:/app/config.json
+      - ./data:/app/data
+      - ./temp:/app/temp

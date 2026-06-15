@@ -1,0 +1,16 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.env
+config.json
+venv/
+.venv/
+data/
+temp/
+dist-portable/
+build/
+*.spec

@@ -2,8 +2,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import app_config
+from server_runtime import resolve_server_config
 
 
 class AppConfigTests(unittest.TestCase):
@@ -45,6 +47,45 @@ class AppConfigTests(unittest.TestCase):
 
         self.assertEqual(updated["telegram"]["bot_token"], "next")
         self.assertEqual(cached["telegram"]["bot_token"], "next")
+
+    def test_load_config_creates_file_and_returns_saved_config(self):
+        loaded = app_config.load_config()
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(loaded, saved)
+        self.assertEqual(app_config.get_config(), saved)
+
+    def test_save_config_ignores_server_environment_overrides(self):
+        with patch.dict("os.environ", {"TG_SYNC_HOST": "0.0.0.0", "TG_SYNC_PORT": "9001"}, clear=False):
+            saved = app_config.save_config({"server": {"host": "127.0.0.1", "port": 8011}})
+
+        self.assertEqual(saved["server"]["host"], "127.0.0.1")
+        self.assertEqual(saved["server"]["port"], 8011)
+        on_disk = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["server"]["host"], "127.0.0.1")
+        self.assertEqual(on_disk["server"]["port"], 8011)
+
+    def test_resolve_server_config_applies_dedicated_environment_overrides(self):
+        with patch.dict("os.environ", {"TG_SYNC_HOST": "0.0.0.0", "TG_SYNC_PORT": "9001"}, clear=True):
+            resolved = resolve_server_config({"host": "127.0.0.1", "port": 8011, "auto_open_browser": True})
+
+        self.assertEqual(resolved["host"], "0.0.0.0")
+        self.assertEqual(resolved["port"], 9001)
+        self.assertTrue(resolved["auto_open_browser"])
+
+    def test_resolve_server_config_falls_back_for_empty_or_invalid_environment(self):
+        with patch.dict("os.environ", {"TG_SYNC_HOST": "", "TG_SYNC_PORT": "bad"}, clear=True):
+            resolved = resolve_server_config({"host": "127.0.0.1", "port": "8022"})
+
+        self.assertEqual(resolved["host"], "127.0.0.1")
+        self.assertEqual(resolved["port"], 8022)
+
+    def test_resolve_server_config_ignores_generic_host_port_environment(self):
+        with patch.dict("os.environ", {"HOST": "0.0.0.0", "PORT": "9001"}, clear=True):
+            resolved = resolve_server_config({"host": "127.0.0.1", "port": 8011})
+
+        self.assertEqual(resolved["host"], "127.0.0.1")
+        self.assertEqual(resolved["port"], 8011)
 
     def test_log_retention_defaults_are_present(self):
         config = app_config.get_config()

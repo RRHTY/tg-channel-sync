@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 import database as db
 from app_config import get_config, get_setup_status, save_config
 from app_paths import ensure_runtime_dirs, static_dir, temp_dir
-from server_runtime import launch_browser_when_ready, reuse_existing_instance_or_exit, should_auto_open_browser
+from server_runtime import launch_browser_when_ready, resolve_server_config, reuse_existing_instance_or_exit, should_auto_open_browser
 from services.channel_mapping_sources import resolve_mapping_source
 from services.logging_config import configure_terminal_logging
 from services.sync_services import format_channel_check_error, normalize_channel_username, resolve_chat_id
@@ -804,9 +804,9 @@ def run_server():
     _cleanup_done = False
     config = get_config()
     configure_terminal_logging()
-    server_cfg = config["server"]
-    host = str(server_cfg.get("host", "127.0.0.1") or "127.0.0.1")
-    port = int(server_cfg.get("port", 8011))
+    server_cfg = resolve_server_config(config["server"])
+    host = str(server_cfg["host"])
+    port = int(server_cfg["port"])
     if should_auto_open_browser(server_cfg):
         launch_browser_when_ready(host, port, SHUTDOWN_EVENT)
     uvicorn_config = uvicorn.Config(
@@ -821,9 +821,9 @@ def run_server():
 
 if __name__ == "__main__":
     startup_config = get_config()
-    startup_server_cfg = startup_config["server"]
-    startup_host = str(startup_server_cfg.get("host", "127.0.0.1") or "127.0.0.1")
-    startup_port = int(startup_server_cfg.get("port", 8011))
+    startup_server_cfg = resolve_server_config(startup_config["server"])
+    startup_host = str(startup_server_cfg["host"])
+    startup_port = int(startup_server_cfg["port"])
     startup_auto_open_browser = should_auto_open_browser(startup_server_cfg)
     if not reuse_existing_instance_or_exit(startup_host, startup_port, startup_auto_open_browser):
         raise SystemExit(0)

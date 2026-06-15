@@ -160,8 +160,7 @@ def load_config() -> dict[str, Any]:
     cfg_path = config_file()
     if not cfg_path.exists():
         config = deepcopy(DEFAULT_CONFIG)
-        save_config(config)
-        return deepcopy(config)
+        return save_config(config)
 
     try:
         config = json.loads(cfg_path.read_text(encoding="utf-8"))
