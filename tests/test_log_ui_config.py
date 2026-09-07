@@ -29,7 +29,6 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertIn("系统日志最大保留条数", content)
         self.assertIn("消息日志最大保留条数", content)
         self.assertIn("Debug 模式：同步输出日志到终端", content)
-        self.assertIn("接入库日志", content)
         self.assertIn("导出可获取当前保留的全部日志", content)
 
     def test_home_page_binds_log_export_actions(self):
@@ -43,3 +42,39 @@ class LogUiConfigTests(unittest.TestCase):
 
         self.assertIn('v-if="!to_saved" v-model="target"', content)
         self.assertEqual(content.count('v-if="form.target_type !== \'saved\'"'), 2)
+
+    def test_application_shell_prioritizes_navigation_over_server_actions(self):
+        content = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('class="app-header"', content)
+        self.assertIn('class="brand-mark"', content)
+        self.assertIn('class="service-menu"', content)
+
+    def test_home_controls_have_accessible_structure(self):
+        content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('class="status-grid"', content)
+        self.assertIn('class="mode-switch"', content)
+        self.assertIn('label="源频道"', content)
+        self.assertIn('label="目标频道"', content)
+        self.assertIn('class="delete-action"', content)
+
+    def test_log_viewer_uses_one_switchable_panel(self):
+        content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('activeKind:"system"', content)
+        self.assertIn('class="log-switch"', content)
+        self.assertIn('v-if="activeKind === \'system\'"', content)
+
+    def test_visual_system_has_keyboard_and_motion_accessibility(self):
+        content = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+
+        self.assertIn(":focus-visible", content)
+        self.assertIn("prefers-reduced-motion: reduce", content)
+        self.assertIn("@media (max-width: 640px)", content)
+
+    def test_view_navigation_returns_to_page_top(self):
+        content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
+
+        self.assertIn("navigateTo(view)", content)
+        self.assertIn('window.scrollTo({ top: 0, behavior: "smooth" })', content)

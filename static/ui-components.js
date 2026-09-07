@@ -55,7 +55,7 @@ const ActionBar = {
 
 const ToastBanner = {
   props: ["notice"],
-  template: `<div v-if="notice && notice.message" class="mb-6 rounded-lg border px-4 py-3 text-sm"
+  template: `<div v-if="notice && notice.message" role="status" aria-live="polite" class="mb-4 rounded-xl border px-4 py-3 text-sm shadow-sm"
     :class="notice.type === 'error' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-700'">
     {{ notice.message }}
   </div>`,
@@ -63,7 +63,7 @@ const ToastBanner = {
 
 const EmptyState = {
   props: ["text"],
-  template: `<div class="rounded border border-dashed p-4 text-center text-gray-400">{{ text || '暂无数据' }}</div>`,
+  template: `<div class="empty-state">{{ text || '暂无数据' }}</div>`,
 };
 
 const SettingSectionNav = {
@@ -176,16 +176,16 @@ const SenderIdentityOptions = {
       this.$emit("update:hash", event.target.checked ? (this.hashTrueValue ?? true) : (this.hashFalseValue ?? false));
     },
   },
-  template: `<div class="bg-white p-3 rounded border text-sm space-y-3">
-    <div class="flex items-center gap-4">
-      <b>发送身份</b>
-      <label><input type="radio" :checked="sender === 'bot'" value="bot" class="ml-2 mr-1" @change="onSenderChange">Bot</label>
-      <label><input type="radio" :checked="sender === 'user'" value="user" class="ml-2 mr-1" @change="onSenderChange">辅助账号</label>
+  template: `<div class="identity-panel">
+    <div class="identity-row">
+      <span class="identity-label">发送身份</span>
+      <label class="identity-option"><input type="radio" :checked="sender === 'bot'" value="bot" @change="onSenderChange">Bot</label>
+      <label class="identity-option"><input type="radio" :checked="sender === 'user'" value="user" @change="onSenderChange">辅助账号</label>
     </div>
-    <label v-if="sender === 'bot'" class="flex items-center gap-2">
+    <label v-if="sender === 'bot'" class="identity-option text-xs text-slate-600">
       <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">Bot 发送失败时改用辅助账号继续发送
     </label>
-    <label v-if="showHashOption" class="flex items-center gap-2">
+    <label v-if="showHashOption" class="identity-option text-xs text-slate-600">
       <input type="checkbox" :checked="hashChecked" @change="onHashChange">重置图片/视频指纹
     </label>
   </div>`,
@@ -219,16 +219,21 @@ const LogPanel = {
     },
   },
   template: `<app-card>
-    <div class="mb-3">
-      <h2 class="text-lg font-semibold">{{ title }}</h2>
-      <p class="text-xs text-gray-500">{{ description }}</p>
-      <div class="mt-3 flex items-center justify-between gap-3">
+    <div class="panel-heading">
+      <div>
+        <div class="panel-kicker">运行记录</div>
+        <h2 class="panel-title">{{ title }}</h2>
+        <p class="panel-description">{{ description }}</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">导出</button>
+        <button @click="$emit('clear')" class="delete-action">清理</button>
+      </div>
+    </div>
+    <div class="mb-2 flex justify-end">
         <div class="flex items-center gap-2">
-          <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">导出</button>
           <button @click="scrollToBottom" class="btn-secondary btn-inline !px-3 !py-1 text-xs">跳至底部</button>
         </div>
-        <button @click="$emit('clear')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">清理</button>
-      </div>
     </div>
     <div :id="panelId" class="log-panel">
       <div v-for="log in logs" :key="log.id" class="border-b border-slate-800 pb-2 text-slate-200">

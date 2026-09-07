@@ -29,6 +29,10 @@
     navButtonClass(view) {
       return this.currentView === view ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200";
     },
+    navigateTo(view) {
+      this.currentView = view;
+      this.$nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    },
     showToast(msg, type = "info") {
       if (!msg) return;
       this.notice = { message: msg, type };
@@ -53,7 +57,7 @@
       return message;
     },
     openSettings() {
-      this.currentView = "settings";
+      this.navigateTo("settings");
     },
     normalizeConfigForm() {
       if (!this.configForm.telegram.api_id) this.configForm.telegram.api_id = "";
@@ -120,7 +124,7 @@
         return;
       }
       await this.saveConfig(!shouldRestart);
-      this.currentView = "home";
+      this.navigateTo("home");
       if (shouldRestart) await this.restartServer();
     },
     async saveSettingsPage(shouldRestart) {

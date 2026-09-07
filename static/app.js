@@ -30,12 +30,17 @@ const SetupWizard = {
 const StatusOverview = {
   props:["appInfo","status"],
   methods:{ tone(v){ if(["已连接","已登录","运行中"].includes(v)) return "border-green-200 bg-green-50 text-green-700"; if(["初始化中","连接超时","等待验证码","等待两步验证","需要登录"].includes(v)) return "border-amber-200 bg-amber-50 text-amber-700"; if(["启动失败","未配置"].includes(v)) return "border-red-200 bg-red-50 text-red-700"; return "border-blue-200 bg-blue-50 text-blue-700"; } },
-  template:`<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6"><div class="card compact-card border" :class="tone(appInfo.bot.status)"><div class="text-xs uppercase tracking-wide opacity-70">Bot</div><div class="text-lg font-semibold mt-2">{{ appInfo.bot.status || '未配置' }}</div><div class="text-xs mt-1">{{ appInfo.bot.name || '未连接' }}</div></div><div class="card compact-card border" :class="tone(appInfo.user.status)"><div class="text-xs uppercase tracking-wide opacity-70">辅助账号</div><div class="text-lg font-semibold mt-2">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="text-xs mt-1 leading-5"><button @click="$emit('open-settings')" class="text-blue-700 hover:underline">前往设置</button> 页面登录</div><div v-else class="text-xs mt-1">{{ appInfo.user.name || '未登录' }}</div></div><div class="card compact-card border" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="text-xs uppercase tracking-wide opacity-70">任务状态</div><div class="text-lg font-semibold mt-2">{{ status.is_syncing ? '运行中' : '空闲' }}</div><div class="text-xs mt-1">{{ status.mode || '等待任务' }}</div></div><div class="card compact-card border border-slate-200 bg-slate-50 text-slate-700"><div class="text-xs uppercase tracking-wide opacity-70">进度</div><div class="text-lg font-semibold mt-2">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="text-xs mt-1">跳过 {{ status.skipped || 0 }}</div></div></div>`
+  template:`<section class="status-grid" aria-label="连接与任务状态">
+    <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">Bot</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div class="status-detail">{{ appInfo.bot.name || '未连接' }}</div></div>
+    <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">辅助账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else class="status-detail">{{ appInfo.user.name || '未登录' }}</div></div>
+    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : '空闲' }}</div><div class="status-detail">{{ status.mode || '等待任务' }}</div></div>
+    <div class="status-card text-slate-700"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
+  </section>`
 };
 
 const ChannelMapping = {
   props:["mappings"],
-  components:{ AppCard, MappingOptionBadges, EmptyState },
+  components:{ AppCard, FieldGroup, MappingOptionBadges, EmptyState },
   data(){ return { source:"", target:"", realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false, to_saved:false }; },
   computed:{
     mappingCount(){ return (this.mappings && this.mappings.mappings ? this.mappings.mappings.length : 0); }
@@ -66,29 +71,67 @@ const ChannelMapping = {
       this.target = "";
     }
   },
-  template:`<app-card><div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-lg font-semibold mb-1">频道映射</h2><p class="text-xs text-gray-500">实时同步现已支持多对多映射。</p></div><span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">共 {{ mappingCount }} 条</span></div><div class="space-y-3"><div class="flex gap-2"><input v-model="source" type="text" placeholder="源频道 ID / URL" class="input-box"><input v-if="!to_saved" v-model="target" type="text" placeholder="目标频道 ID / URL" class="input-box"></div><label class="flex items-center gap-2 text-sm cursor-pointer select-none"><input type="checkbox" v-model="to_saved" class="mr-1">发送到辅助账号收藏夹</label><div class="bg-white p-3 rounded border text-sm space-y-3"><div class="flex items-center gap-4"><b>发送身份</b><label><input type="radio" :checked="!to_saved && realtime_sender === 'bot'" :disabled="to_saved" class="ml-2 mr-1" @change="realtime_sender='bot'">Bot</label><label><input type="radio" :checked="to_saved || realtime_sender === 'user'" :disabled="to_saved" class="ml-2 mr-1" @change="realtime_sender='user'">辅助账号</label></div><div class="flex items-center gap-4"><b>获取身份</b><label><input type="radio" :checked="!realtime_fallback_to_user" class="ml-2 mr-1" @change="realtime_fallback_to_user=false">Bot</label><label><input type="radio" :checked="realtime_fallback_to_user" class="ml-2 mr-1" @change="realtime_fallback_to_user=true">辅助账号</label></div><label class="flex items-center gap-2"><input type="checkbox" v-model="realtime_hash_perturb">重置图片/视频指纹</label></div><button @click="saveRule" class="btn-primary">保存规则</button></div><div class="mapping-scroll mt-4 space-y-3 text-sm"><div v-for="group in mappings.grouped_mappings || []" :key="group.target_id" class="rounded border bg-gray-50 p-3"><div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold text-gray-500">目标频道</span><span class="font-mono text-gray-800">{{ group.target_id === -1 ? '📌 收藏夹' : group.target_id }}</span></div><div class="space-y-2"><div v-for="item in group.sources" :key="item.source_id" class="flex items-center justify-between rounded bg-white px-3 py-2 group"><div class="min-w-0"><div class="flex items-center gap-2 font-mono"><span class="text-xs text-gray-400">源</span><span>{{ item.source_id }}</span></div><mapping-option-badges class="mt-1" :item="item"></mapping-option-badges></div><button @click="$emit('del', item.source_id, group.target_id)" class="text-red-500 opacity-0 group-hover:opacity-100 px-2">删除</button></div></div></div><empty-state v-if="!(mappings.grouped_mappings || []).length" text="暂无映射规则"></empty-state></div></app-card>`
+  template:`<app-card>
+    <div class="panel-heading"><div><div class="panel-kicker">Realtime</div><h2 class="panel-title">频道映射</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
+    <div class="mapping-form">
+      <div class="form-row">
+        <field-group label="源频道"><input v-model="source" type="text" placeholder="ID 或 t.me 链接" class="input-box"></field-group>
+        <field-group v-if="!to_saved" label="目标频道"><input v-if="!to_saved" v-model="target" type="text" placeholder="ID 或 t.me 链接" class="input-box"></field-group>
+      </div>
+      <label class="choice-card"><input type="checkbox" v-model="to_saved"><span><span class="choice-title">发送到收藏夹</span><span class="choice-description">使用当前辅助账号的 Saved Messages</span></span></label>
+      <div class="identity-panel">
+        <div class="identity-row"><span class="identity-label">发送身份</span><label class="identity-option"><input type="radio" :checked="!to_saved && realtime_sender === 'bot'" :disabled="to_saved" @change="realtime_sender='bot'">Bot</label><label class="identity-option"><input type="radio" :checked="to_saved || realtime_sender === 'user'" :disabled="to_saved" @change="realtime_sender='user'">辅助账号</label></div>
+        <div class="identity-row"><span class="identity-label">获取身份</span><label class="identity-option"><input type="radio" :checked="!realtime_fallback_to_user" @change="realtime_fallback_to_user=false">Bot</label><label class="identity-option"><input type="radio" :checked="realtime_fallback_to_user" @change="realtime_fallback_to_user=true">辅助账号</label></div>
+        <label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="realtime_hash_perturb">重置图片/视频指纹</label>
+      </div>
+      <button @click="saveRule" class="btn-primary">添加映射</button>
+    </div>
+    <div class="mapping-scroll mt-4 space-y-2 text-sm">
+      <div v-for="group in mappings.grouped_mappings || []" :key="group.target_id" class="mapping-group"><div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold text-slate-500">目标</span><span class="font-mono text-xs font-semibold text-slate-700">{{ group.target_id === -1 ? '收藏夹' : group.target_id }}</span></div><div class="space-y-2"><div v-for="item in group.sources" :key="item.source_id" class="mapping-item"><div class="min-w-0"><div class="truncate font-mono text-xs text-slate-700">{{ item.source_id }}</div><mapping-option-badges class="mt-1" :item="item"></mapping-option-badges></div><button @click="$emit('del', item.source_id, group.target_id)" class="delete-action">删除</button></div></div></div>
+      <empty-state v-if="!(mappings.grouped_mappings || []).length" text="暂无映射"></empty-state>
+    </div>
+  </app-card>`
 };
 const SyncPanel = {
-  components:{ SenderIdentityOptions },
+  components:{ FieldGroup, SenderIdentityOptions },
   props:["status","form","stopping"],
   computed:{
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; }
   },
-  template:`<div class="card"><h2 class="text-lg font-semibold mb-1">历史同步</h2><p class="text-xs text-gray-500 mb-4">批量同步指定范围内的历史消息到目标频道。</p><div class="mb-6 min-h-[104px] rounded bg-white p-4 shadow-sm transition-all"><template v-if="status.is_syncing"><div class="flex justify-between text-sm mb-1"><span class="font-medium text-blue-700">运行中 · {{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="w-full bg-gray-200 rounded-full h-2 mb-3"><div class="bg-blue-600 h-2 rounded-full transition-all" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><div class="text-xs text-gray-500"><p>跳过: {{ status.skipped }}</p><p class="whitespace-pre-line break-all text-blue-500 font-bold mt-1">{{ status.current_text }}</p></div></template><div v-else class="flex h-full min-h-[72px] items-center text-xs text-gray-400">任务开始后会在这里显示运行进度。</div></div><div class="space-y-4" :class="{ 'opacity-50 pointer-events-none': status.is_syncing }"><div v-if="form.mode !== 'json'" class="flex gap-2"><input v-model="form.source_id" placeholder="源频道 ID / URL" class="input-box"><input v-if="form.target_type !== 'saved'" v-model="form.target_id" placeholder="目标频道 ID / URL" class="input-box"></div><div v-else class="space-y-2"><input v-if="form.target_type !== 'saved'" v-model="form.target_id" placeholder="目标频道 ID / URL" class="input-box"><input v-model="form.json_path" placeholder="JSON 文件路径" class="input-box font-mono text-sm"><input v-model="form.json_source_username" placeholder="源频道：@username 或 https://t.me/username" class="input-box"><div><label class="text-xs">媒体组合并窗口（秒）</label><input v-model="form.json_media_group_window_seconds" type="number" min="1" step="1" class="input-box"></div></div><label class="flex items-center gap-2 text-sm cursor-pointer select-none"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel" class="mr-1">发送到辅助账号收藏夹</label><div class="flex bg-white rounded-lg border p-1"><button type="button" @click="form.mode='json'" :class="form.mode === 'json' ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-500'" class="flex-1 py-1 text-sm rounded">JSON 导入</button><button type="button" @click="form.mode='api'" :class="form.mode === 'api' ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-gray-500'" class="flex-1 py-1 text-sm rounded">API 复制</button><button type="button" @click="form.mode='clone'" :class="form.mode === 'clone' ? 'bg-emerald-100 text-emerald-700 font-semibold' : 'text-gray-500'" class="flex-1 py-1 text-sm rounded">下载重传</button></div><div class="text-xs text-gray-500 -mt-2 px-1 space-y-1"><template v-if="form.mode === 'json'"><p>根据导出目录中的 result.json 和同目录媒体文件自动发送到目标频道。</p><p>仅支持普通回复恢复；如需改写 t.me/源频道/消息ID 链接，可填写 @用户名 或 t.me 链接。</p><p>无显式媒体组标记时，会按这个秒数窗口尝试合并连续图片/视频消息。</p></template><p v-else-if="form.mode === 'api'">通过 API 直接复制消息，速度更快。</p><p v-else-if="form.mode === 'clone'">通过 API 下载后重新上传，适合需要重新上传的场景。</p></div><sender-identity-options v-if="supportsSenderOptions" :sender="form.sender" :fallback-value="form.clone_fallback_to_user" :show-hash-option="supportsHashPerturb" :hash-value="form.hash_perturb" fallback-true-value="1" fallback-false-value="0" hash-true-value="1" hash-false-value="0" @update:sender="form.sender = $event" @update:fallback="form.clone_fallback_to_user = $event" @update:hash="form.hash_perturb = $event"></sender-identity-options><div v-if="form.mode === 'api' || form.mode === 'clone'" class="flex gap-2"><input v-model="form.start_id" type="number" placeholder="起始 ID" class="input-box"><input v-model="form.end_id" type="number" placeholder="结束 ID" class="input-box"></div><div><label class="text-xs">单条处理延时（秒）<span class="text-gray-400">，最小 0.5</span></label><input v-model="form.delay" type="number" step="0.5" min="0.5" class="input-box"></div><label class="flex items-start gap-2 text-sm bg-amber-50 border border-amber-200 rounded p-3"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0" class="mt-0.5"><span><b>强制发送</b><span class="block text-xs text-gray-600">跳过重复和断点检查，直接发送当前选中的消息。</span></span></label></div><button v-if="!status.is_syncing" type="button" @click="$emit('start', form)" class="btn-primary mt-4 bg-gray-800 hover:bg-gray-900">启动 {{ form.mode.toUpperCase() }} 任务</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 bg-red-600 cursor-not-allowed">中断中<span class="dot-anim"></span></button><button v-else type="button" @click="$emit('stop')" class="btn-primary mt-4 bg-red-600 hover:bg-red-700">中断任务</button></div>`
+  template:`<div class="card">
+    <div class="panel-heading"><div><div class="panel-kicker">History</div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
+    <div class="progress-shell"><template v-if="status.is_syncing"><div class="mb-2 flex justify-between text-xs font-semibold text-indigo-700"><span>{{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="mb-3 h-1.5 w-full rounded-full bg-indigo-100"><div class="h-1.5 rounded-full bg-indigo-600 transition-all" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
+    <div class="form-surface" :class="{ 'opacity-50 pointer-events-none': status.is_syncing }">
+      <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">API 复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载重传</button></div>
+      <div v-if="form.mode !== 'json'" class="form-row"><field-group label="源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="目标频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>
+      <div v-else class="form-surface"><field-group v-if="form.target_type !== 'saved'" label="目标频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group label="JSON 文件"><input v-model="form.json_path" placeholder="result.json 路径" class="input-box font-mono text-sm"></field-group><div class="form-row"><field-group label="源频道用户名"><input v-model="form.json_source_username" placeholder="@username" class="input-box"></field-group><field-group label="媒体组合并窗口"><input v-model="form.json_media_group_window_seconds" type="number" min="1" step="1" class="input-box"></field-group></div></div>
+      <label class="choice-card"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span><span class="choice-title">发送到收藏夹</span><span class="choice-description">使用当前辅助账号</span></span></label>
+      <sender-identity-options v-if="supportsSenderOptions" :sender="form.sender" :fallback-value="form.clone_fallback_to_user" :show-hash-option="supportsHashPerturb" :hash-value="form.hash_perturb" fallback-true-value="1" fallback-false-value="0" hash-true-value="1" hash-false-value="0" @update:sender="form.sender = $event" @update:fallback="form.clone_fallback_to_user = $event" @update:hash="form.hash_perturb = $event"></sender-identity-options>
+      <div v-if="form.mode === 'api' || form.mode === 'clone'" class="form-row"><field-group label="起始消息 ID"><input v-model="form.start_id" type="number" placeholder="可留空" class="input-box"></field-group><field-group label="结束消息 ID"><input v-model="form.end_id" type="number" placeholder="可留空" class="input-box"></field-group></div>
+      <field-group label="单条延时（秒）"><input v-model="form.delay" type="number" step="0.5" min="0.5" class="input-box"></field-group>
+      <label class="choice-card"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0"><span><span class="choice-title">强制发送</span><span class="choice-description">忽略重复和断点记录</span></span></label>
+    </div>
+    <button v-if="!status.is_syncing" type="button" @click="$emit('start', form)" class="btn-primary mt-4">启动任务</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">中断中<span class="dot-anim"></span></button><button v-else type="button" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">中断任务</button>
+  </div>`
 };
 
 const LogViewer = {
   components:{ LogPanel },
   props:["sysLogs","msgLogs"],
-  template:`<div class="log-grid"><log-panel title="系统日志" description="页面默认只显示最近一部分日志；导出可获取当前保留的全部日志。" :logs="sysLogs" kind="system" panel-id="sys-log-panel" @clear="$emit('clear-sys-logs')" @export="$emit('export-sys-logs')"></log-panel><log-panel title="消息日志" description="页面默认只显示最近一部分日志；导出可获取当前保留的全部日志。" :logs="msgLogs" kind="message" panel-id="msg-log-panel" @clear="$emit('clear-msg-logs')" @export="$emit('export-msg-logs')"></log-panel></div>`
+  data(){ return { activeKind:"system" }; },
+  template:`<div class="log-workspace" aria-description="导出可获取当前保留的全部日志">
+    <div class="log-switch" role="tablist" aria-label="日志类型"><button type="button" role="tab" :aria-selected="activeKind === 'system'" :class="{ active: activeKind === 'system' }" @click="activeKind='system'">系统日志 · {{ (sysLogs || []).length }}</button><button type="button" role="tab" :aria-selected="activeKind === 'message'" :class="{ active: activeKind === 'message' }" @click="activeKind='message'">消息日志 · {{ (msgLogs || []).length }}</button></div>
+    <log-panel v-if="activeKind === 'system'" title="系统日志" description="最近记录" :logs="sysLogs" kind="system" panel-id="sys-log-panel" @clear="$emit('clear-sys-logs')" @export="$emit('export-sys-logs')"></log-panel>
+    <log-panel v-else title="消息日志" description="最近记录" :logs="msgLogs" kind="message" panel-id="msg-log-panel" @clear="$emit('clear-msg-logs')" @export="$emit('export-msg-logs')"></log-panel>
+  </div>`
 };
 
 const GlobalFilters = {
   props:["settings","rules","newRule"],
-  data(){ return { typeLabels:{ sync_text:"📝 文本", sync_photo:"🖼️ 图片", sync_video:"🎞️ 视频", sync_document:"📎 文件", sync_audio:"🎵 音频", sync_voice:"🎙️ 语音", sync_sticker:"🏷️ 贴纸", sync_gif:"🎪 动图" } }; },
+  data(){ return { typeLabels:{ sync_text:"文本", sync_photo:"图片", sync_video:"视频", sync_document:"文件", sync_audio:"音频", sync_voice:"语音", sync_sticker:"贴纸", sync_gif:"动图" } }; },
   computed:{ ruleCount(){ return (this.rules || []).length; } },
-  template:`<div class="space-y-6"><div class="card"><h2 class="text-lg font-semibold mb-1">🧰 类型过滤</h2><p class="text-xs text-gray-500 mb-4">控制哪些类型的消息允许同步。</p><div class="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-2 mb-5"><label v-for="(label, key) in typeLabels" class="flex items-center text-sm cursor-pointer hover:text-blue-600"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0" class="mr-1.5 w-4 h-4"> {{ label }}</label></div><button @click="$emit('save-settings', settings)" class="btn-primary">保存类型配置</button></div><div class="card"><div class="mb-4 flex items-start justify-between gap-3"><div><h2 class="text-lg font-semibold mb-1">🪄 正则过滤</h2><p class="text-xs text-gray-500">控制内容替换和整条消息拦截规则。</p></div><span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">共 {{ ruleCount }} 条</span></div><div class="space-y-3 mb-5"><select v-model="newRule.rule_type" class="input-box bg-white"><option value="replace">🔁 仅替换文本</option><option value="drop">⛔ 屏蔽整条消息</option></select><input v-model="newRule.pattern" type="text" placeholder="正则表达式" class="input-box font-mono"><input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" type="text" placeholder="替换为（留空则删除匹配文本）" class="input-box"><label class="flex items-center text-sm"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0" class="mr-2">区分大小写</label><button @click="$emit('add-rule', newRule)" class="btn-primary">添加规则</button></div><ul class="rule-scroll space-y-2 text-sm border-t pt-4"><li v-for="rule in rules" :key="rule.id" class="flex justify-between p-2 bg-gray-50 rounded group"><span class="truncate font-mono">{{ rule.pattern }} <span v-if="rule.rule_type === 'replace'" class="text-green-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="text-red-500 opacity-0 group-hover:opacity-100">删除</button></li><li v-if="!(rules || []).length" class="rounded border border-dashed p-4 text-center text-gray-400">暂无过滤规则</li></ul></div></div>`
+  template:`<div class="space-y-4"><div class="card"><div class="panel-heading"><div><div class="panel-kicker">Content</div><h2 class="panel-title">类型过滤</h2></div></div><div class="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4"><label v-for="(label, key) in typeLabels" class="choice-card !p-2"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0"><span class="choice-title">{{ label }}</span></label></div><button @click="$emit('save-settings', settings)" class="btn-secondary">保存类型</button></div><div class="card"><div class="panel-heading"><div><div class="panel-kicker">Rules</div><h2 class="panel-title">正则过滤</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div><div class="filter-form mb-4"><select v-model="newRule.rule_type" aria-label="规则类型" class="input-box bg-white"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select><input v-model="newRule.pattern" type="text" aria-label="正则表达式" placeholder="正则表达式" class="input-box font-mono"><input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" type="text" aria-label="替换内容" placeholder="替换为；留空则删除" class="input-box"><label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0">区分大小写</label><button @click="$emit('add-rule', newRule)" class="btn-primary">添加规则</button></div><ul class="rule-scroll space-y-2 text-sm border-t border-slate-100 pt-4"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><span class="min-w-0 truncate font-mono text-xs">{{ rule.pattern }} <span v-if="rule.rule_type === 'replace'" class="text-emerald-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul></div></div>`
 };
 const UserAuthPanel = {
   props:["auth","submitting","cooldown"],
@@ -215,7 +258,6 @@ const SettingsPanel = {
               </field-group>
               <toggle-field
                 label="启动后自动打开浏览器"
-                description="服务启动成功后自动打开控制台页面。"
                 badge="需重启"
                 :checked="config.server.auto_open_browser"
                 @update:checked="config.server.auto_open_browser = $event"
@@ -230,7 +272,6 @@ const SettingsPanel = {
             <div class="settings-grid-tight">
               <toggle-field
                 label="启用代理"
-                description="在受限网络环境中通过代理访问 Telegram。"
                 badge="需重启"
                 :checked="config.proxy.enabled"
                 @update:checked="config.proxy.enabled = $event"
@@ -269,13 +310,11 @@ const SettingsPanel = {
             <div class="toggle-grid">
               <toggle-field
                 label="默认强制发送"
-                description="默认跳过重复和断点检查，直接发送当前选中的消息。"
                 :checked="config.sync.force_send"
                 @update:checked="config.sync.force_send = $event"
               ></toggle-field>
               <toggle-field
                 label="为外部转发/回复追加来源前缀"
-                description="会在消息首行追加来源链接，对 JSON 导入、API 复制、下载重传都生效。"
                 :checked="config.sync.add_external_source_header"
                 @update:checked="config.sync.add_external_source_header = $event"
               ></toggle-field>
@@ -303,7 +342,6 @@ const SettingsPanel = {
             </field-group>
             <toggle-field
               label="启用多 Bot 上传限流轮换"
-              description="适用于频繁上传时规避单个 Bot 的速率限制。"
               :checked="config.sync.bot_rate_limit_enabled"
               @update:checked="config.sync.bot_rate_limit_enabled = $event"
             ></toggle-field>
@@ -341,7 +379,6 @@ const SettingsPanel = {
         <div class="mt-4">
           <toggle-field
             label="Debug 模式：同步输出日志到终端"
-            description="开启后，系统日志、消息日志、接入库日志和 Bot 收到的普通消息会打印到启动程序的终端窗口。"
             :checked="config.app.debug_terminal_logs"
             @update:checked="config.app.debug_terminal_logs = $event"
           ></toggle-field>

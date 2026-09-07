@@ -6,30 +6,24 @@
     <title>杏铃同步台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/app.css?v=2">
 </head>
-<body class="text-gray-800 p-8 font-sans">
-<div id="app" class="max-w-6xl mx-auto">
-    <div class="flex flex-col gap-4 mb-8 border-b border-gray-200 pb-4 lg:flex-row lg:justify-between lg:items-center">
-        <div class="flex items-center gap-4">
-            <h1 class="text-2xl font-bold text-gray-900">杏铃同步台</h1>
-            <div v-if="currentView !== 'setup'" class="flex gap-2">
-                <button @click="currentView='home'" :class="navButtonClass('home')" class="nav-btn">主页</button>
-                <button @click="openSettings" :class="navButtonClass('settings')" class="nav-btn">设置</button>
+<body class="text-gray-800 font-sans">
+<div id="app" class="app-shell">
+    <header class="app-header">
+        <div class="brand-block">
+            <span class="brand-mark" aria-hidden="true">杏</span>
+            <div>
+                <h1 class="brand-title">杏铃同步台</h1>
+                <p class="brand-subtitle">Telegram Sync Console</p>
             </div>
         </div>
-        <div class="flex items-center gap-2">
-            <button v-if="currentView !== 'setup'" @click="restartServer" :disabled="serverAction==='restart'" class="text-sm bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded transition disabled:opacity-60 disabled:cursor-not-allowed">
-                {{ serverAction==='restart' ? '重启中...' : '重启服务' }}
-            </button>
-            <button v-if="currentView !== 'setup'" @click="stopServer" :disabled="serverAction==='stop'" class="text-sm bg-red-50 text-red-700 hover:bg-red-100 px-3 py-1.5 rounded transition disabled:opacity-60 disabled:cursor-not-allowed">
-                {{ serverAction==='stop' ? '关闭中...' : '关闭服务' }}
-            </button>
-            <div class="flex items-center gap-2">
-                <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="text-gray-500 hover:text-gray-800 transition flex items-center gap-1 text-sm">
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                    GitHub
-                </a>
+        <div class="header-actions">
+            <nav v-if="currentView !== 'setup'" class="app-nav" aria-label="主导航">
+                <button @click="navigateTo('home')" :class="navButtonClass('home')" class="nav-btn">主页</button>
+                <button @click="openSettings" :class="navButtonClass('settings')" class="nav-btn">设置</button>
+            </nav>
+            <div class="header-meta">
                 <a
                     v-if="versionInfo.current_version && (!versionInfo.up_to_date || versionInfo.status === 'error')"
                     :href="versionInfo.url || 'https://github.com/RRHTY/tg-channel-sync'"
@@ -47,9 +41,24 @@
                         ? ('当前 ' + versionInfo.current_version)
                         : ('发现新版 ' + versionInfo.latest_version) }}
                 </a>
+                <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="icon-link" aria-label="打开 GitHub 仓库" title="GitHub 仓库">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                </a>
+                <details v-if="currentView !== 'setup'" class="service-menu">
+                    <summary aria-label="服务操作" title="服务操作">•••</summary>
+                    <div class="service-menu-popover">
+                        <div class="service-menu-title">服务操作</div>
+                        <button @click="restartServer" :disabled="serverAction==='restart'" class="service-action">
+                            {{ serverAction==='restart' ? '重启中...' : '重启服务' }}
+                        </button>
+                        <button @click="stopServer" :disabled="serverAction==='stop'" class="service-action service-action-danger">
+                            {{ serverAction==='stop' ? '关闭中...' : '关闭服务' }}
+                        </button>
+                    </div>
+                </details>
             </div>
         </div>
-    </div>
+    </header>
 
     <toast-banner :notice="notice"></toast-banner>
 
@@ -78,31 +87,14 @@
 
     <settings-panel v-else :config="configForm" :saving="configSaving" :user-auth="userAuth" :auth-submitting="authSubmitting" :send-code-cooldown="sendCodeCooldown" @save-config="saveSettingsPage" @save-restart="saveAndRestart" @send-code="sendUserCode" @verify-code="verifyUserCode" @submit-password="submitUserPassword" @cancel-auth="cancelUserAuth" @switch-account="switchUserAccount"></settings-panel>
 
-    <footer class="mt-12 border-t border-slate-200 pt-6">
-        <div class="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-5 py-4 shadow-sm">
-            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                    <div class="text-sm font-semibold text-slate-800">杏铃同步台</div>
-                    <div class="mt-1 text-xs text-slate-500">Telegram 频道同步、迁移与重传控制台</div>
-                </div>
-                <div class="flex flex-wrap items-center gap-2 text-xs">
-                    <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600">
-                        当前版本 {{ versionInfo.current_version || 'unknown' }}
-                    </span>
-                    <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600 transition hover:border-slate-300 hover:text-slate-900">
-                        GitHub 仓库
-                    </a>
-                    <a v-if="versionInfo.latest_version && !versionInfo.up_to_date" :href="versionInfo.url || 'https://github.com/RRHTY/tg-channel-sync'" target="_blank" class="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700 transition hover:bg-amber-100">
-                        最新版本 {{ versionInfo.latest_version }}
-                    </a>
-                </div>
-            </div>
-        </div>
+    <footer class="app-footer">
+        <span>杏铃同步台 · Telegram 频道同步、迁移与重传</span>
+        <span>v{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
-<script src="/static/ui-components.js"></script>
+<script src="/static/ui-components.js?v=2"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/app-methods.js?v=2"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>
