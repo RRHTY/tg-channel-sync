@@ -18,9 +18,16 @@ import database as db
 from app_config import get_config
 from app_paths import pyrogram_user_session_base
 from services.sync_services import (
+    SAVED_MESSAGES_TARGET_ID,
+    begin_saved_messages_account_switch,
+    begin_saved_messages_operation,
     build_link_rewrite_context,
     execute_with_network_retry,
+    finish_saved_messages_account_switch,
+    finish_saved_messages_operation,
     get_quote_payload,
+    is_saved_messages_target,
+    resolve_destination_chat_id,
     resolve_reply_for_forward,
     rewrite_message_links,
 )
@@ -33,7 +40,7 @@ from sync_worker.core.progress import (
 )
 from sync_worker.core.text import prepend_source_header_html
 from sync_worker.media import prepare_media_for_send
-from sync_worker.runtime import TEMP_DIR
+from sync_worker.runtime import TEMP_DIR, sync_state
 from sync_worker.senders import (
     build_bot_media_group,
     build_user_media_group,
@@ -447,7 +454,7 @@ async def _download_realtime_media(message: Message, msg_type: str) -> str | Non
     return target_path if os.path.exists(target_path) else None
 
 
-async def _send_realtime_text_with_identity(target_id, text_html, reply_to_id, quote_data, options):
+async def _send_realtime_text_with_identity(chat_id, text_html, reply_to_id, quote_data, options):
     sender = options["sender"]
     client = aiogram_bot if sender == "bot" else pyro_user_app
     if sender == "user" and not getattr(client, "is_initialized", False):
@@ -456,14 +463,14 @@ async def _send_realtime_text_with_identity(target_id, text_html, reply_to_id, q
         lambda: dynamic_send(
             client,
             "text",
-            target_id,
+            chat_id,
             None,
             text_html,
             "HTML" if sender == "bot" else ParseMode.HTML,
             reply_to_message_id=reply_to_id,
             quote_data=quote_data if reply_to_id else None,
         ),
-        action_label=f"实时文本发送 {target_id}",
+        action_label=f"实时文本发送 {chat_id}",
         log_tag="REALTIME_NETWORK_RETRY",
     )
     return sent.message_id if sender == "bot" else sent.id
@@ -483,7 +490,7 @@ async def _resolve_realtime_upload_target(options: dict, file_sizes: list[int]):
     )
 
 
-async def _send_realtime_media_via_user(target_id, msg_type, file_path, text_html, reply_to_id, quote_data, label_prefix, source_item=None):
+async def _send_realtime_media_via_user(chat_id, msg_type, file_path, text_html, reply_to_id, quote_data, label_prefix, source_item=None):
     if not getattr(pyro_user_app, "is_initialized", False):
         raise RuntimeError("实时同步使用辅助账号发送前，请先完成辅助账号登录")
     file_size = os.path.getsize(file_path)
@@ -493,7 +500,7 @@ async def _send_realtime_media_via_user(target_id, msg_type, file_path, text_htm
         lambda: dynamic_send(
             pyro_user_app,
             msg_type,
-            target_id,
+            chat_id,
             file_path,
             text_html,
             ParseMode.HTML,
@@ -508,13 +515,13 @@ async def _send_realtime_media_via_user(target_id, msg_type, file_path, text_htm
     return sent.id
 
 
-async def _send_realtime_media_group_via_user(target_id, downloaded_files, captions, reply_to_id, quote_data, action_label, spoiler_flags=None):
+async def _send_realtime_media_group_via_user(chat_id, downloaded_files, captions, reply_to_id, quote_data, action_label, spoiler_flags=None):
     if not getattr(pyro_user_app, "is_initialized", False):
         raise RuntimeError("实时同步使用辅助账号发送前，请先完成辅助账号登录")
     total_size = sum(os.path.getsize(path) for _, path, _ in downloaded_files)
     tracker = UploadProgressTracker("实时上传媒体组 [改用辅助账号]", total_size)
     media = build_user_media_group(downloaded_files, captions, {}, spoiler_flags=spoiler_flags)
-    kwargs = {"chat_id": target_id, "media": media}
+    kwargs = {"chat_id": chat_id, "media": media}
     if reply_to_id:
         kwargs["reply_to_message_id"] = reply_to_id
     if quote_data and reply_to_id:
@@ -535,7 +542,7 @@ async def _send_realtime_media_group_via_user(target_id, downloaded_files, capti
     return [sent.id for sent in sent_msgs]
 
 
-async def _send_realtime_media_upload(source_id, target_id, message, msg_type, text_html, reply_to_id, quote_data, options):
+async def _send_realtime_media_upload(source_id, chat_id, message, msg_type, text_html, reply_to_id, quote_data, options):
     file_path = await _download_realtime_media(message, msg_type)
     if not file_path:
         return None
@@ -548,7 +555,7 @@ async def _send_realtime_media_upload(source_id, target_id, message, msg_type, t
             client = upload_target["client"]
             if actual_sender == "user":
                 return await _send_realtime_media_via_user(
-                    target_id,
+                    chat_id,
                     msg_type,
                     file_path,
                     text_html,
@@ -566,7 +573,7 @@ async def _send_realtime_media_upload(source_id, target_id, message, msg_type, t
                     lambda: dynamic_send(
                         client,
                         msg_type,
-                        target_id,
+                        chat_id,
                         media_arg,
                         text_html,
                         upload_target["parse_mode"],
@@ -596,7 +603,7 @@ async def _send_realtime_media_upload(source_id, target_id, message, msg_type, t
                 if _realtime_should_fallback_to_user(options) and getattr(pyro_user_app, "is_initialized", False):
                     await db.add_msg_log("BOT_FALLBACK", f"实时同步 消息ID:{message.message_id} | Bot 上传失败，已改用辅助账号重传")
                     return await _send_realtime_media_via_user(
-                        target_id,
+                        chat_id,
                         msg_type,
                         file_path,
                         text_html,
@@ -613,7 +620,7 @@ async def _send_realtime_media_upload(source_id, target_id, message, msg_type, t
             pass
 
 
-async def _send_realtime_media_group_upload(source_id, target_id, group, captions, reply_to_id, quote_data, options):
+async def _send_realtime_media_group_upload(source_id, chat_id, group, captions, reply_to_id, quote_data, options):
     downloaded_files = []
     try:
         for item in group:
@@ -630,7 +637,7 @@ async def _send_realtime_media_group_upload(source_id, target_id, group, caption
             client = upload_target["client"]
             if actual_sender == "user":
                 return await _send_realtime_media_group_via_user(
-                    target_id,
+                    chat_id,
                     downloaded_files,
                     captions,
                     reply_to_id,
@@ -640,7 +647,7 @@ async def _send_realtime_media_group_upload(source_id, target_id, group, caption
                 )
 
             _, media = build_bot_media_group(downloaded_files, captions, {}, sum(file_sizes), upload_target["label"])
-            kwargs = {"chat_id": target_id, "media": media}
+            kwargs = {"chat_id": chat_id, "media": media}
             if reply_to_id:
                 kwargs["reply_to_message_id"] = reply_to_id
             try:
@@ -668,7 +675,7 @@ async def _send_realtime_media_group_upload(source_id, target_id, group, caption
                 if _realtime_should_fallback_to_user(options) and getattr(pyro_user_app, "is_initialized", False):
                     await db.add_msg_log("BOT_FALLBACK", f"实时同步 组首ID:{group[0].message_id} | Bot 上传失败，已改用辅助账号重传")
                     return await _send_realtime_media_group_via_user(
-                        target_id,
+                        chat_id,
                         downloaded_files,
                         captions,
                         reply_to_id,
@@ -741,9 +748,13 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
     await db.add_msg_log("RECV_GROUP", f"[{chat_name}] 媒体组消息ID:{msg_ids}")
     for target_mapping in target_mappings:
         target_id = target_mapping["target_id"]
-        realtime_options = _realtime_sync_options(target_mapping)
-        reply_to_id = await resolve_reply_for_forward(source_id, target_id, group[0].message_id, getattr(group[0], "reply_to_message_id", None))
+        target_type = str(target_mapping.get("target_type", "") or "channel")
+        saved_operation = await begin_saved_messages_operation(target_type, target_id)
         try:
+            # 收藏夹目标：chat_id 为当前辅助账号 own id（即时解析），target_id 仍是 DB 键（sentinel）。
+            chat_id = await resolve_destination_chat_id(target_type, target_id, pyro_user_app)
+            realtime_options = _realtime_sync_options(target_mapping)
+            reply_to_id = await resolve_reply_for_forward(source_id, target_id, group[0].message_id, getattr(group[0], "reply_to_message_id", None))
             if any(_realtime_needs_reupload(get_msg_type(item), realtime_options) for item in group):
                 captions = []
                 link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
@@ -755,7 +766,7 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
                     captions.append(item_text)
                 sent_ids = await _send_realtime_media_group_upload(
                     source_id,
-                    target_id,
+                    chat_id,
                     group,
                     captions,
                     reply_to_id,
@@ -849,6 +860,8 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
                         "ERROR",
                         f"源频道:{source_id} | 目标频道:{target_id} | 消息ID:{item.message_id} | 媒体组回退逐条发送失败: {item_exc}",
                     )
+        finally:
+            await finish_saved_messages_operation(saved_operation)
 
 
 @dp.channel_post()
@@ -896,26 +909,30 @@ async def handle_new_post(message: Message):
     
     for target_mapping in target_mappings:
         target_id = target_mapping["target_id"]
-        realtime_options = _realtime_sync_options(target_mapping)
-        link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
-        target_html, rewrite_count = await rewrite_message_links(new_html, source_id, link_context)
-        
-        # 添加外部来源前缀（如果启用）
-        if include_external_source_header:
-            target_html = prepend_source_header_html(target_html, message, enabled=True)
-        
-        if rewrite_count:
-            await db.add_msg_log("LINK_REWRITE", f"源频道:{source_id} | 目标频道:{target_id} | 消息链接改写:{rewrite_count}处")
-        reply_to_id = await resolve_reply_for_forward(source_id, target_id, message.message_id, getattr(message, "reply_to_message_id", None))
-
+        target_type = str(target_mapping.get("target_type", "") or "channel")
+        saved_operation = await begin_saved_messages_operation(target_type, target_id)
         try:
+            # 收藏夹目标：chat_id 为当前辅助账号 own id（即时解析），target_id 仍是 DB 键（sentinel）。
+            chat_id = await resolve_destination_chat_id(target_type, target_id, pyro_user_app)
+            realtime_options = _realtime_sync_options(target_mapping)
+            link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
+            target_html, rewrite_count = await rewrite_message_links(new_html, source_id, link_context)
+
+            # 添加外部来源前缀（如果启用）
+            if include_external_source_header:
+                target_html = prepend_source_header_html(target_html, message, enabled=True)
+
+            if rewrite_count:
+                await db.add_msg_log("LINK_REWRITE", f"源频道:{source_id} | 目标频道:{target_id} | 消息链接改写:{rewrite_count}处")
+            reply_to_id = await resolve_reply_for_forward(source_id, target_id, message.message_id, getattr(message, "reply_to_message_id", None))
+
             sent_id = None
             if not has_media and realtime_options["sender"] == "user":
-                sent_id = await _send_realtime_text_with_identity(target_id, target_html, reply_to_id, quote_data, realtime_options)
+                sent_id = await _send_realtime_text_with_identity(chat_id, target_html, reply_to_id, quote_data, realtime_options)
             elif has_media and _realtime_needs_reupload(msg_type, realtime_options):
                 sent_id = await _send_realtime_media_upload(
                     source_id,
-                    target_id,
+                    chat_id,
                     message,
                     msg_type,
                     target_html,
@@ -971,6 +988,8 @@ async def handle_new_post(message: Message):
             await db.add_msg_log("SEND", f"源频道:{source_id} | 消息ID:{message.message_id} | 目标频道:{target_id} | 新消息ID:{sent_id} | 转发成功")
         except Exception as exc:
             await db.add_msg_log("ERROR", f"消息ID:{message.message_id} | 目标频道:{target_id} | 发送失败: {exc}")
+        finally:
+            await finish_saved_messages_operation(saved_operation)
 
 
 @dp.message()
@@ -1007,15 +1026,25 @@ async def handle_edited_post(message: Message):
     if should_skip:
         return
 
-    for target_id, target_msg_id in target_mappings:
-        link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
-        target_html, rewrite_count = await rewrite_message_links(new_html, source_id, link_context)
+    for target_id, target_msg_id, target_type in target_mappings:
+        saved_operation = await begin_saved_messages_operation(target_type, target_id)
         try:
-            kwargs = {"chat_id": target_id, "message_id": target_msg_id, "parse_mode": "HTML"}
-            if message.text:
-                await aiogram_bot.edit_message_text(text=target_html, **kwargs)
+            link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
+            target_html, rewrite_count = await rewrite_message_links(new_html, source_id, link_context)
+            chat_id = await resolve_destination_chat_id(target_type, target_id, pyro_user_app)
+            kwargs = {"chat_id": chat_id, "message_id": target_msg_id}
+            if is_saved_messages_target(target_type, target_id):
+                kwargs["parse_mode"] = ParseMode.HTML
+                if message.text:
+                    await pyro_user_app.edit_message_text(text=target_html, **kwargs)
+                else:
+                    await pyro_user_app.edit_message_caption(caption=target_html, **kwargs)
             else:
-                await aiogram_bot.edit_message_caption(caption=target_html, **kwargs)
+                kwargs["parse_mode"] = "HTML"
+                if message.text:
+                    await aiogram_bot.edit_message_text(text=target_html, **kwargs)
+                else:
+                    await aiogram_bot.edit_message_caption(caption=target_html, **kwargs)
             if rewrite_count:
                 await db.add_msg_log("LINK_REWRITE", f"源频道:{source_id} | 目标频道:{target_id} | 消息链接改写:{rewrite_count}处")
             await db.add_msg_log("EDIT", f"源消息ID:{msg_id} | 目标频道:{target_id} | 目标消息ID:{target_msg_id} | 编辑成功")
@@ -1024,6 +1053,8 @@ async def handle_edited_post(message: Message):
                 "ERROR",
                 f"源消息ID:{msg_id} | 目标频道:{target_id} | 目标消息ID:{target_msg_id} | 编辑失败: {exc}",
             )
+        finally:
+            await finish_saved_messages_operation(saved_operation)
 
 
 def _public_channel_peer(source_ref: str):
@@ -1234,15 +1265,22 @@ async def cancel_user_auth():
 
 
 async def switch_user_account():
-    await close_user_client()
-    session_base = pyrogram_user_session_base()
-    for path in session_base.parent.glob(f"{session_base.name}*"):
-        try:
-            if path.is_file():
-                path.unlink()
-        except Exception:
-            pass
-    return {"status": "success", "message": "已清除当前辅助账号会话，请重新登录新账号"}
+    if sync_state.get("is_syncing"):
+        raise ValueError("请先中断当前同步任务，待任务停止后再切换辅助账号")
+    await begin_saved_messages_account_switch()
+    try:
+        await close_user_client()
+        await db.delete_message_mappings_for_target(SAVED_MESSAGES_TARGET_ID)
+        session_base = pyrogram_user_session_base()
+        for path in session_base.parent.glob(f"{session_base.name}*"):
+            try:
+                if path.is_file():
+                    path.unlink()
+            except Exception:
+                pass
+        return {"status": "success", "message": "已清除当前辅助账号会话，请重新登录新账号"}
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 async def close_user_client():

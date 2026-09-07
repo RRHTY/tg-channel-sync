@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import database
+from services import sync_services
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -76,6 +77,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(mapping["realtime_hash_perturb"])
         self.assertEqual(mapping["source_mode"], "bot")
         self.assertEqual(mapping["source_ref"], "")
+        # 迁移新增的 target_type 列对既有行回填默认值 "channel"，保证向后兼容。
+        self.assertEqual(mapping["target_type"], "channel")
         self.assertEqual(await database.get_target_msg_id(1001, 11, 2001), 99)
 
     async def test_system_log_retention_uses_configured_limit(self):
@@ -131,6 +134,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     "realtime_hash_perturb": True,
                     "source_mode": "bot",
                     "source_ref": "",
+                    "target_type": "channel",
                 },
                 {
                     "target_id": 200,
@@ -139,6 +143,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     "realtime_hash_perturb": False,
                     "source_mode": "bot",
                     "source_ref": "",
+                    "target_type": "channel",
                 },
             ],
         )
@@ -178,3 +183,43 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await database.would_create_channel_mapping_cycle(1, 1))
         self.assertTrue(await database.would_create_channel_mapping_cycle(3, 1))
         self.assertFalse(await database.would_create_channel_mapping_cycle(3, 4))
+
+    async def test_channel_mapping_saved_target_type_stored_and_read_back(self):
+        await database.init_db()
+        await database.add_channel_mapping(
+            -100123,
+            sync_services.SAVED_MESSAGES_TARGET_ID,
+            realtime_sender="user",
+            source_mode="public_user",
+            source_ref="public_source",
+            target_type="saved",
+        )
+
+        mappings = await database.get_target_channel_mappings(-100123)
+        [mapping] = [m for m in mappings if m["target_type"] == "saved"]
+        self.assertEqual(mapping["target_id"], -1)
+        self.assertEqual(mapping["target_type"], "saved")
+        self.assertEqual(mapping["realtime_sender"], "user")
+
+        [group] = await database.get_public_user_mapping_groups()
+        [item] = [m for m in group["mappings"] if m["target_type"] == "saved"]
+        self.assertEqual(item["target_id"], -1)
+        self.assertEqual(item["target_type"], "saved")
+
+        await database.save_msg_mapping(-100123, 10, sync_services.SAVED_MESSAGES_TARGET_ID, 20)
+        self.assertEqual(
+            await database.get_all_target_msg_mappings(-100123, 10),
+            [(sync_services.SAVED_MESSAGES_TARGET_ID, 20, "saved")],
+        )
+
+    async def test_delete_message_mappings_for_target_preserves_other_targets(self):
+        await database.init_db()
+        await database.save_msg_mapping(-100123, 10, sync_services.SAVED_MESSAGES_TARGET_ID, 20)
+        await database.save_msg_mapping(-100123, 10, -100456, 30)
+
+        await database.delete_message_mappings_for_target(sync_services.SAVED_MESSAGES_TARGET_ID)
+
+        self.assertIsNone(
+            await database.get_target_msg_id(-100123, 10, sync_services.SAVED_MESSAGES_TARGET_ID)
+        )
+        self.assertEqual(await database.get_target_msg_id(-100123, 10, -100456), 30)

@@ -228,6 +228,48 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scope_a, scope_b)
         self.assertLess(scope_a, 0)
 
+    def test_is_saved_messages_target_uses_target_type_then_sentinel(self):
+        # target_type 优先，无论 target_id 是什么
+        self.assertTrue(sync_services.is_saved_messages_target("saved", 0))
+        self.assertTrue(sync_services.is_saved_messages_target("saved", -100456))
+        # sentinel 占位值兼容识别（旧路径未带 target_type 时）
+        self.assertTrue(sync_services.is_saved_messages_target(None, sync_services.SAVED_MESSAGES_TARGET_ID))
+        self.assertTrue(sync_services.is_saved_messages_target("channel", sync_services.SAVED_MESSAGES_TARGET_ID))
+        # 普通频道目标
+        self.assertFalse(sync_services.is_saved_messages_target("channel", -100456))
+        self.assertFalse(sync_services.is_saved_messages_target(None, -100456))
+        self.assertFalse(sync_services.is_saved_messages_target(None, None))
+
+    async def test_resolve_destination_chat_id_saved_returns_current_own_id(self):
+        # saved 目标每次即时解析当前辅助账号 own id，避免 stale-id 静默发错目标。
+        fake_me = type("Me", (), {"id": 999})()
+        fake_user_app = type("UserApp", (), {"is_initialized": True, "me": fake_me})()
+
+        resolved = await sync_services.resolve_destination_chat_id(
+            "saved", sync_services.SAVED_MESSAGES_TARGET_ID, fake_user_app
+        )
+        self.assertEqual(resolved, 999)
+
+    async def test_resolve_destination_chat_id_saved_raises_when_user_not_logged_in(self):
+        fake_user_app = type("UserApp", (), {"is_initialized": False, "me": None})()
+
+        with self.assertRaises(ValueError):
+            await sync_services.resolve_destination_chat_id(
+                "saved", sync_services.SAVED_MESSAGES_TARGET_ID, fake_user_app
+            )
+
+    async def test_resolve_destination_chat_id_channel_returns_stored_value(self):
+        resolved = await sync_services.resolve_destination_chat_id("channel", -100456, None)
+        self.assertEqual(resolved, -100456)
+
+    async def test_build_link_rewrite_context_returns_none_for_saved_target(self):
+        # saved 目标短路：target_id 为 sentinel 时返回 None，避免 bot.get_chat(-1) 抛错与 t.me/c/1/* 失效链接。
+        bot = FakeBot()
+        ctx = await sync_services.build_link_rewrite_context(
+            bot, -100123, sync_services.SAVED_MESSAGES_TARGET_ID
+        )
+        self.assertIsNone(ctx)
+
     def test_clone_parse_retry_after_seconds(self):
         self.assertEqual(history._parse_retry_after_seconds(Exception("retry after 16")), 16)
         self.assertIsNone(history._parse_retry_after_seconds(Exception("other error")))
@@ -760,7 +802,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         original_bot = bot_engine.aiogram_bot
         bot_engine.aiogram_bot = fake_bot
         try:
-            with patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1002, 20)])), \
+            with patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1002, 20, "channel")])), \
                  patch("bot_engine.db.apply_message_filters", AsyncMock(return_value=(False, "new"))), \
                  patch("bot_engine.build_link_rewrite_context", AsyncMock(return_value={})), \
                  patch("bot_engine.rewrite_message_links", AsyncMock(return_value=("new", 0))), \
@@ -771,5 +813,126 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("编辑失败", mock_log.await_args.args[1])
         finally:
             bot_engine.aiogram_bot = original_bot
+
+    async def test_realtime_edit_saved_message_uses_current_user_chat(self):
+        fake_bot = type("Bot", (), {"edit_message_text": AsyncMock()})()
+        fake_user = type(
+            "User",
+            (),
+            {
+                "is_initialized": True,
+                "me": type("Me", (), {"id": 999})(),
+                "edit_message_text": AsyncMock(),
+            },
+        )()
+        message = type(
+            "Msg",
+            (),
+            {"chat": type("Chat", (), {"id": -1001})(), "message_id": 10, "text": "new", "caption": None, "html_text": "new"},
+        )()
+        original_bot = bot_engine.aiogram_bot
+        original_user = bot_engine.pyro_user_app
+        bot_engine.aiogram_bot = fake_bot
+        bot_engine.pyro_user_app = fake_user
+        try:
+            with patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1, 20, "saved")])), \
+                 patch("bot_engine.db.apply_message_filters", AsyncMock(return_value=(False, "new"))), \
+                 patch("bot_engine.build_link_rewrite_context", AsyncMock(return_value=None)), \
+                 patch("bot_engine.rewrite_message_links", AsyncMock(return_value=("new", 0))), \
+                 patch("bot_engine.db.add_msg_log", AsyncMock()):
+                await bot_engine.handle_edited_post(message)
+
+            fake_user.edit_message_text.assert_awaited_once_with(
+                chat_id=999,
+                message_id=20,
+                text="new",
+                parse_mode=bot_engine.ParseMode.HTML,
+            )
+            fake_bot.edit_message_text.assert_not_awaited()
+        finally:
+            bot_engine.aiogram_bot = original_bot
+            bot_engine.pyro_user_app = original_user
+
+    async def test_switch_user_account_invalidates_saved_message_mappings(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp") as temp_dir:
+            session_base = Path(temp_dir) / "sync_user_session"
+            session_file = session_base.with_suffix(".session")
+            session_file.write_text("session", encoding="utf-8")
+            with patch("bot_engine.close_user_client", AsyncMock()), \
+                 patch("bot_engine.pyrogram_user_session_base", return_value=session_base), \
+                 patch("bot_engine.db.delete_message_mappings_for_target", AsyncMock()) as mock_delete:
+                result = await bot_engine.switch_user_account()
+
+            self.assertFalse(session_file.exists())
+
+        self.assertEqual(result["status"], "success")
+        mock_delete.assert_awaited_once_with(sync_services.SAVED_MESSAGES_TARGET_ID)
+
+    async def test_switch_user_account_is_rejected_while_sync_is_running(self):
+        with patch("bot_engine.sync_state", {"is_syncing": True}), \
+             patch("bot_engine.close_user_client", AsyncMock()) as mock_close, \
+             patch("bot_engine.db.delete_message_mappings_for_target", AsyncMock()) as mock_delete:
+            with self.assertRaisesRegex(ValueError, "先中断当前同步任务"):
+                await bot_engine.switch_user_account()
+
+        mock_close.assert_not_awaited()
+        mock_delete.assert_not_awaited()
+
+    async def test_switch_user_account_waits_for_realtime_saved_edit_to_finish(self):
+        edit_started = asyncio.Event()
+        allow_edit_to_finish = asyncio.Event()
+
+        async def edit_message_text(**kwargs):
+            edit_started.set()
+            await allow_edit_to_finish.wait()
+
+        fake_bot = type("Bot", (), {"edit_message_text": AsyncMock()})()
+        fake_user = type(
+            "User",
+            (),
+            {
+                "is_initialized": True,
+                "me": type("Me", (), {"id": 999})(),
+                "edit_message_text": AsyncMock(side_effect=edit_message_text),
+            },
+        )()
+        message = type(
+            "Msg",
+            (),
+            {"chat": type("Chat", (), {"id": -1001})(), "message_id": 10, "text": "new", "caption": None, "html_text": "new"},
+        )()
+        original_bot = bot_engine.aiogram_bot
+        original_user = bot_engine.pyro_user_app
+        bot_engine.aiogram_bot = fake_bot
+        bot_engine.pyro_user_app = fake_user
+        try:
+            with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp") as temp_dir, \
+                 patch("bot_engine.sync_state", {"is_syncing": False}), \
+                 patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1, 20, "saved")])), \
+                 patch("bot_engine.db.apply_message_filters", AsyncMock(return_value=(False, "new"))), \
+                 patch("bot_engine.build_link_rewrite_context", AsyncMock(return_value=None)), \
+                 patch("bot_engine.rewrite_message_links", AsyncMock(return_value=("new", 0))), \
+                 patch("bot_engine.db.add_msg_log", AsyncMock()), \
+                 patch("bot_engine.close_user_client", AsyncMock()) as mock_close, \
+                 patch("bot_engine.pyrogram_user_session_base", return_value=Path(temp_dir) / "sync_user_session"), \
+                 patch("bot_engine.db.delete_message_mappings_for_target", AsyncMock()) as mock_delete:
+                edit_task = asyncio.create_task(bot_engine.handle_edited_post(message))
+                await asyncio.wait_for(edit_started.wait(), timeout=1)
+
+                with self.assertRaisesRegex(ValueError, "收藏夹消息仍在处理中"):
+                    await bot_engine.switch_user_account()
+                mock_close.assert_not_awaited()
+
+                allow_edit_to_finish.set()
+                await edit_task
+                result = await bot_engine.switch_user_account()
+
+            self.assertEqual(result["status"], "success")
+            mock_close.assert_awaited_once()
+            mock_delete.assert_awaited_once_with(sync_services.SAVED_MESSAGES_TARGET_ID)
+        finally:
+            allow_edit_to_finish.set()
+            bot_engine.aiogram_bot = original_bot
+            bot_engine.pyro_user_app = original_user
 
 

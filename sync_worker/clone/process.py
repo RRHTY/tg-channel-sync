@@ -11,6 +11,7 @@ import bot_engine
 import database as db
 from app_config import get_config
 from services.sync_services import (
+    SAVED_MESSAGES_TARGET_ID,
     SyncNetworkRetryExhaustedError,
     build_link_rewrite_context,
     create_progress_callback,
@@ -19,6 +20,7 @@ from services.sync_services import (
     get_quote_payload,
     log_sync_error,
     resolve_chat_id,
+    resolve_destination_chat_id,
     resolve_reply_target,
     rewrite_message_links,
     safe_execute,
@@ -78,8 +80,8 @@ def _normalize_sync_html(mode: str, html_text: str | None) -> str:
     return normalize_pyro_html(html_text) if mode == "api" else normalize_bot_html(html_text)
 
 
-def _base_api_copy_kwargs(target_id, source_id, msg_id):
-    return {"chat_id": target_id, "from_chat_id": source_id, "message_id": msg_id}
+def _base_api_copy_kwargs(chat_id, source_id, msg_id):
+    return {"chat_id": chat_id, "from_chat_id": source_id, "message_id": msg_id}
 
 
 def _add_reply_kwargs(kwargs: dict, reply_to_id):
@@ -106,7 +108,7 @@ def _download_actor_label(app) -> str:
 
 
 def _build_api_media_group_copy_kwargs(
-    target_id,
+    chat_id,
     source_id,
     group_first_id,
     rewritten_captions,
@@ -116,7 +118,7 @@ def _build_api_media_group_copy_kwargs(
     reply_to_id,
     quote_data,
 ):
-    kwargs = _base_api_copy_kwargs(target_id, source_id, group_first_id)
+    kwargs = _base_api_copy_kwargs(chat_id, source_id, group_first_id)
     if captions_changed or group_has_spoiler:
         kwargs["parse_mode"] = ParseMode.HTML
         if captions_changed:
@@ -134,7 +136,7 @@ def _clone_media_group_items(downloaded_files, mode):
 
 def _build_clone_media_group_send_kwargs(
     actual_sender,
-    target_id,
+    chat_id,
     group_items,
     rewritten_captions,
     thumbnail_paths,
@@ -151,7 +153,7 @@ def _build_clone_media_group_send_kwargs(
     else:
         tracker = UploadProgressTracker(f"上传媒体组 [{upload_label}]", total_bytes)
         media_list = build_user_media_group(group_items, rewritten_captions, thumbnail_paths, spoiler_flags)
-    send_kwargs = {"chat_id": target_id, "media": media_list}
+    send_kwargs = {"chat_id": chat_id, "media": media_list}
     if reply_to_id:
         send_kwargs["reply_to_message_id"] = reply_to_id
     if quote_data and reply_to_id:
@@ -234,7 +236,7 @@ async def _safe_get_messages(app, source_id, msg_ids):
 async def _send_api_media(
     app,
     msg_type,
-    target_id,
+    chat_id,
     media_ref,
     caption_html,
     reply_to_id=None,
@@ -245,7 +247,7 @@ async def _send_api_media(
         lambda: dynamic_send(
             app,
             msg_type,
-            target_id,
+            chat_id,
             media_ref,
             caption_html,
             ParseMode.HTML,
@@ -291,7 +293,12 @@ async def sync_single_message(
     clone_fallback_to_user=True,
     include_external_source_header: bool = False,
     source_username_override: str | None = None,
+    chat_id: int | None = None,
 ):
+    # chat_id 为实际发送目的地（收藏夹目标 = 当前辅助账号 own id），target_id 为 DB 键
+    # （收藏夹目标 = sentinel -1）。普通频道目标二者相同，缺省时回退 target_id。
+    if chat_id is None:
+        chat_id = target_id
     msg_type, _ = get_msg_meta(msg, mode)
     has_media = msg_type != "text"
     file_name = getattr(getattr(msg, msg_type, None), "file_name", "") if msg_type in ["document", "video"] else ""
@@ -324,7 +331,7 @@ async def sync_single_message(
             if quote_data and reply_to_id:
                 if not has_media:
                     kwargs = {
-                        "chat_id": target_id,
+                        "chat_id": chat_id,
                         "text": new_html,
                         "parse_mode": ParseMode.HTML,
                         "reply_to_message_id": reply_to_id,
@@ -347,7 +354,7 @@ async def sync_single_message(
                     sent = await _send_api_media(
                         app,
                         msg_type,
-                        target_id,
+                        chat_id,
                         media_ref,
                         new_html,
                         reply_to_id,
@@ -360,7 +367,7 @@ async def sync_single_message(
                 # 如果文本发生变化，或者启用了外部来源前缀功能，使用 send_message/copy_message with caption
                 # 这样可以确保转发信息被正确处理（避免 copy_message 的不一致行为）
                 if not has_media:
-                    kwargs = {"chat_id": target_id, "text": new_html, "parse_mode": ParseMode.HTML}
+                    kwargs = {"chat_id": chat_id, "text": new_html, "parse_mode": ParseMode.HTML}
                     if reply_to_id:
                         kwargs["reply_to_message_id"] = reply_to_id
                     sent_id = (
@@ -375,10 +382,10 @@ async def sync_single_message(
                     media_ref = get_media_reference(msg, msg_type)
                     if not media_ref:
                         raise ValueError(f"媒体遮罩消息缺少可复用 file_id: {msg.id}")
-                    sent = await _send_api_media(app, msg_type, target_id, media_ref, new_html, reply_to_id, has_spoiler=True)
+                    sent = await _send_api_media(app, msg_type, chat_id, media_ref, new_html, reply_to_id, has_spoiler=True)
                     sent_id = sent.id
                 else:
-                    kwargs = _add_reply_kwargs(_base_api_copy_kwargs(target_id, source_id, msg.id), reply_to_id)
+                    kwargs = _add_reply_kwargs(_base_api_copy_kwargs(chat_id, source_id, msg.id), reply_to_id)
                     kwargs.update({"caption": new_html, "parse_mode": ParseMode.HTML})
                     sent_id = (
                         await execute_with_network_retry(
@@ -389,7 +396,7 @@ async def sync_single_message(
                         )
                     ).id
             else:
-                kwargs = _base_api_copy_kwargs(target_id, source_id, msg.id)
+                kwargs = _base_api_copy_kwargs(chat_id, source_id, msg.id)
                 _add_reply_kwargs(kwargs, reply_to_id)
                 sent_id = (
                     await execute_with_network_retry(
@@ -405,7 +412,7 @@ async def sync_single_message(
                     lambda: dynamic_send(
                         bot if sender == "bot" else app,
                         "text",
-                        target_id,
+                        chat_id,
                         None,
                         new_html,
                         "HTML" if sender == "bot" else ParseMode.HTML,
@@ -480,7 +487,7 @@ async def sync_single_message(
                             lambda: dynamic_send(
                                 client,
                                 msg_type,
-                                target_id,
+                                chat_id,
                                 media_arg,
                                 new_html,
                                 parse_mode,
@@ -557,7 +564,7 @@ async def sync_single_message(
                                 lambda: dynamic_send(
                                     app,
                                     msg_type,
-                                    target_id,
+                                    chat_id,
                                     file_path,
                                     new_html,
                                     ParseMode.HTML,
@@ -624,7 +631,10 @@ async def sync_media_group(
     clone_fallback_to_user=True,
     include_external_source_header: bool = False,
     source_username_override: str | None = None,
+    chat_id: int | None = None,
 ):
+    if chat_id is None:
+        chat_id = target_id
     if await update_state_and_check_skip(source_id, target_id, group[0].id, "[媒体组]", force_send=force_send):
         return SYNC_RESULT_SKIPPED
 
@@ -650,7 +660,7 @@ async def sync_media_group(
                 break
             try:
                 kwargs = _build_api_media_group_copy_kwargs(
-                    target_id,
+                    chat_id,
                     source_id,
                     group[0].id,
                     rewritten_captions,
@@ -815,7 +825,7 @@ async def sync_media_group(
                 group_items = _clone_media_group_items(downloaded_files, mode)
                 send_kwargs = _build_clone_media_group_send_kwargs(
                     actual_sender,
-                    target_id,
+                    chat_id,
                     group_items,
                     rewritten_captions,
                     thumbnail_paths,
@@ -913,7 +923,7 @@ async def sync_media_group(
             tracker = UploadProgressTracker("上传媒体组 [改用辅助账号]", sum(file_sizes))
             group_items = _clone_media_group_items(downloaded_files, mode)
             media_list = build_user_media_group(group_items, rewritten_captions, thumbnail_paths, spoiler_flags)
-            send_kwargs = {"chat_id": target_id, "media": media_list}
+            send_kwargs = {"chat_id": chat_id, "media": media_list}
             if reply_to_id:
                 send_kwargs["reply_to_message_id"] = reply_to_id
             if quote_data and reply_to_id:
@@ -1005,6 +1015,7 @@ async def process_master_sync(
     json_media_group_window_seconds: int = 3,
     hash_perturb: bool = False,
     clone_fallback_to_user: bool = True,
+    target_type: str = "channel",
 ):
     safe_delay = max(0.5, float(delay))
     if mode == "api":
@@ -1033,7 +1044,14 @@ async def process_master_sync(
 
     try:
         source_id = 0 if mode == "json" else await resolve_chat_id(bot_engine.aiogram_bot, source_id_raw)
-        target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
+        if str(target_type or "").strip() == "saved":
+            # 收藏夹目标：跳过 resolve_chat_id（sentinel 不是真实 Telegram id），
+            # 发送 chat_id 即时解析为当前辅助账号 own id。
+            target_id = SAVED_MESSAGES_TARGET_ID
+            chat_id = await resolve_destination_chat_id("saved", target_id, bot_engine.pyro_user_app)
+        else:
+            target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
+            chat_id = None
     except Exception as exc:
         await log_sync_error("任务中止", RuntimeError(format_channel_check_error(exc)))
         sync_state["is_syncing"] = False
@@ -1091,6 +1109,7 @@ async def process_master_sync(
                             hash_perturb=hash_perturb,
                             clone_fallback_to_user=clone_fallback_to_user,
                             include_external_source_header=include_external_source_header,
+                            chat_id=chat_id,
                         )
                     else:
                         await sync_media_group(
@@ -1106,6 +1125,7 @@ async def process_master_sync(
                             hash_perturb=hash_perturb,
                             clone_fallback_to_user=clone_fallback_to_user,
                             include_external_source_header=include_external_source_header,
+                            chat_id=chat_id,
                         )
         else:
             await process_json_sync(
@@ -1118,6 +1138,7 @@ async def process_master_sync(
                 media_group_window_seconds=json_media_group_window_seconds,
                 clone_fallback_to_user=clone_fallback_to_user,
                 hash_perturb=hash_perturb,
+                target_type=target_type,
             )
 
     except asyncio.CancelledError:

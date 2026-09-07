@@ -37,3 +37,9 @@ class LogUiConfigTests(unittest.TestCase):
 
         self.assertIn('@export-sys-logs="exportSystemLogs"', content)
         self.assertIn('@export-msg-logs="exportMessageLogs"', content)
+
+    def test_saved_messages_target_hides_channel_inputs(self):
+        content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('v-if="!to_saved" v-model="target"', content)
+        self.assertEqual(content.count('v-if="form.target_type !== \'saved\'"'), 2)

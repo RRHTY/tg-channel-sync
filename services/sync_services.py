@@ -62,6 +62,80 @@ def build_json_source_scope_id(source_username: str) -> int:
     return -int(digest, 16)
 
 
+# 收藏夹（Saved Messages）目标在 channel_mappings.target_id 中存储的占位值。
+# -1 永远不是真实 Telegram id；与 build_json_source_scope_id 派生的大负数 source_scope_id 不冲突。
+# 存占位值而非真实 own id，是为了跨辅助账号重登录保持稳定（避免 stale-id 产生重复/失效映射）。
+SAVED_MESSAGES_TARGET_ID = -1
+_saved_messages_state_lock = asyncio.Lock()
+_saved_messages_active_operations = 0
+_saved_messages_account_switching = False
+
+
+def is_saved_messages_target(target_type, target_id) -> bool:
+    """判断该目标是否为收藏夹（Saved Messages）。target_type 优先，sentinel 作为兼容信号。"""
+    if str(target_type or "channel") == "saved":
+        return True
+    try:
+        return int(target_id or 0) == SAVED_MESSAGES_TARGET_ID
+    except (TypeError, ValueError):
+        return False
+
+
+async def begin_saved_messages_operation(target_type, target_id) -> bool:
+    """为一次收藏夹投递/编辑登记生命周期占用；普通频道返回 False。"""
+    if not is_saved_messages_target(target_type, target_id):
+        return False
+
+    global _saved_messages_active_operations
+    async with _saved_messages_state_lock:
+        if _saved_messages_account_switching:
+            raise ValueError("辅助账号正在切换，请稍后再处理收藏夹消息")
+        _saved_messages_active_operations += 1
+    return True
+
+
+async def finish_saved_messages_operation(acquired: bool) -> None:
+    if not acquired:
+        return
+
+    global _saved_messages_active_operations
+    async with _saved_messages_state_lock:
+        _saved_messages_active_operations = max(0, _saved_messages_active_operations - 1)
+
+
+async def begin_saved_messages_account_switch() -> None:
+    """占用账号切换窗口；存在未结束的收藏夹操作时立即拒绝。"""
+    global _saved_messages_account_switching
+    async with _saved_messages_state_lock:
+        if _saved_messages_active_operations:
+            raise ValueError("收藏夹消息仍在处理中，请待处理完成或停止后再切换辅助账号")
+        if _saved_messages_account_switching:
+            raise ValueError("辅助账号正在切换，请稍后重试")
+        _saved_messages_account_switching = True
+
+
+async def finish_saved_messages_account_switch() -> None:
+    global _saved_messages_account_switching
+    async with _saved_messages_state_lock:
+        _saved_messages_account_switching = False
+
+
+async def resolve_destination_chat_id(target_type, stored_target_id, user_app) -> int:
+    """将存储的 target_id 映射为实际发送 chat_id。
+
+    收藏夹目标返回当前辅助账号的 own id（每次即时解析，避免 stale-id 静默发错目标）；
+    普通频道目标原样返回 stored_target_id。DB 键仍用 stored_target_id（收藏夹为 sentinel）。
+    """
+    if is_saved_messages_target(target_type, stored_target_id):
+        if user_app is None or not getattr(user_app, "is_initialized", False):
+            raise ValueError("收藏夹目标需要先完成辅助账号登录")
+        me = getattr(user_app, "me", None)
+        if me is None or not getattr(me, "id", None):
+            me = await user_app.get_me()
+        return int(me.id)
+    return int(stored_target_id)
+
+
 async def resolve_chat_id(bot, chat_ref: str) -> int:
     if bot is None:
         raise ValueError("BOT 未配置或未连接，无法解析频道")
@@ -148,6 +222,11 @@ async def resolve_reply_for_forward(
 
 async def build_link_rewrite_context(bot, source_id, target_id, source_username_override=None):
     if bot is None:
+        return None
+
+    # 收藏夹目标没有可改写的目标频道用户名，且 target_id 为 sentinel；
+    # 返回 None 让 rewrite_message_links 原样返回文本，避免产生 t.me/c/1/* 失效链接。
+    if is_saved_messages_target(None, target_id):
         return None
 
     context = {"source_id": source_id, "target_id": target_id}

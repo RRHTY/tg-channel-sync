@@ -742,6 +742,7 @@ class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
                 await json_sync.process_json_sync("user", "@target", str(json_path), 0.5, False)
 
             fake_user.send_message.assert_awaited_once()
+            self.assertEqual(fake_user.send_message.await_args.kwargs["chat_id"], -100456)
 
     async def test_process_json_sync_splits_long_text_via_user(self):
         with tempfile.TemporaryDirectory() as temp_dir:

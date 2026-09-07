@@ -14,6 +14,7 @@ import database as db
 from app_config import get_config
 from services.sync_services import (
     MESSAGE_LINK_RE,
+    SAVED_MESSAGES_TARGET_ID,
     SyncNetworkRetryExhaustedError,
     build_link_rewrite_context,
     build_json_source_scope_id,
@@ -22,6 +23,7 @@ from services.sync_services import (
     log_sync_error,
     normalize_channel_username,
     resolve_chat_id,
+    resolve_destination_chat_id,
     resolve_reply_target,
     rewrite_message_links,
     safe_execute,
@@ -238,7 +240,7 @@ async def _prepare_json_media_path(media_path: str, media_type: str, msg_id: int
     return await prepare_json_media_for_send(media_path, media_type, msg_id, hash_perturb, temp_dir=TEMP_DIR)
 
 
-async def _send_json_text_parts_via_user(target_id, text_parts, reply_to_id):
+async def _send_json_text_parts_via_user(chat_id, text_parts, reply_to_id):
     app = bot_engine.pyro_user_app
     if not getattr(app, "is_initialized", False):
         raise JsonSyncFatalError("Bot 发送失败，且辅助账号未登录，无法回退发送文本消息")
@@ -247,7 +249,7 @@ async def _send_json_text_parts_via_user(target_id, text_parts, reply_to_id):
     for index, text_part in enumerate(text_parts):
         sent = await _execute_with_retry(
             lambda text_part=text_part, part_reply_to_id=reply_to_id if index == 0 else None: app.send_message(
-                chat_id=target_id,
+                chat_id=chat_id,
                 text=text_part,
                 parse_mode=ParseMode.HTML,
                 **({"reply_to_message_id": part_reply_to_id} if part_reply_to_id else {}),
@@ -260,7 +262,7 @@ async def _send_json_text_parts_via_user(target_id, text_parts, reply_to_id):
     return first_sent
 
 
-async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user, target_id, text, reply_to_id, msg_id):
+async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user, chat_id, text, reply_to_id, msg_id):
     text_parts = _split_json_text_for_send(text)
     first_sent = None
     index = 0
@@ -274,7 +276,7 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
             try:
                 sent = await execute_with_network_retry(
                     lambda text_part=text_part, part_reply_to_id=part_reply_to_id: upload_target["client"].send_message(
-                        target_id,
+                        chat_id,
                         text_part,
                         parse_mode="HTML",
                         reply_to_message_id=part_reply_to_id,
@@ -300,7 +302,7 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
                     )
                     if upload_target["sender"] == "user":
                         await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 频控，已切换辅助账号发送文本")
-                        user_sent = await _send_json_text_parts_via_user(target_id, text_parts[index:], part_reply_to_id)
+                        user_sent = await _send_json_text_parts_via_user(chat_id, text_parts[index:], part_reply_to_id)
                         return first_sent or user_sent
                     continue
                 if bot_engine.should_disable_upload_bot_for_error(exc):
@@ -313,14 +315,14 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
                     )
                     if upload_target["sender"] == "user":
                         await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | 当前 Bot 已失效，已切换辅助账号发送文本")
-                        user_sent = await _send_json_text_parts_via_user(target_id, text_parts[index:], part_reply_to_id)
+                        user_sent = await _send_json_text_parts_via_user(chat_id, text_parts[index:], part_reply_to_id)
                         return first_sent or user_sent
                     continue
                 raise
 
         if sent is None and not sync_state["stop_requested"] and _json_should_fallback_to_user(sender, clone_fallback_to_user):
             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 发送失败，已改用辅助账号发送文本")
-            user_sent = await _send_json_text_parts_via_user(target_id, text_parts[index:], part_reply_to_id)
+            user_sent = await _send_json_text_parts_via_user(chat_id, text_parts[index:], part_reply_to_id)
             return first_sent or user_sent
         if sent is None:
             return first_sent
@@ -330,7 +332,7 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
     return first_sent
 
 
-async def _send_json_single_via_user(target_id, media_type, media_path, caption, reply_to_id, tracker, file_label, has_spoiler=False):
+async def _send_json_single_via_user(chat_id, media_type, media_path, caption, reply_to_id, tracker, file_label, has_spoiler=False):
     app = bot_engine.pyro_user_app
     if not getattr(app, "is_initialized", False):
         raise JsonSyncFatalError("Bot 上传体积超限，且辅助账号未登录，无法回退重传")
@@ -341,7 +343,7 @@ async def _send_json_single_via_user(target_id, media_type, media_path, caption,
     }
     return await _execute_with_retry(
         lambda: getattr(app, f"send_{media_type}", app.send_document)(
-            chat_id=target_id,
+            chat_id=chat_id,
             **media_kwargs,
             **({} if media_type == "sticker" else caption_kwargs),
             **({"reply_to_message_id": reply_to_id} if reply_to_id else {}),
@@ -353,8 +355,8 @@ async def _send_json_single_via_user(target_id, media_type, media_path, caption,
     )   
 
 
-async def _send_json_text_via_user(target_id, text, reply_to_id):
-    return await _send_json_text_parts_via_user(target_id, _split_json_text_for_send(text), reply_to_id)
+async def _send_json_text_via_user(chat_id, text, reply_to_id):
+    return await _send_json_text_parts_via_user(chat_id, _split_json_text_for_send(text), reply_to_id)
 
 
 def _json_media_group_items(file_entries, rewritten_captions):
@@ -366,7 +368,7 @@ def _json_media_group_items(file_entries, rewritten_captions):
     return group_items, normalized_captions
 
 
-async def _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id):
+async def _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id):
     app = bot_engine.pyro_user_app
     if not getattr(app, "is_initialized", False):
         raise JsonSyncFatalError("Bot 上传体积超限，且辅助账号未登录，无法回退发送媒体组")
@@ -375,7 +377,7 @@ async def _send_json_group_via_user(group, target_id, rewritten_captions, file_e
     group_items, normalized_captions = _json_media_group_items(file_entries, rewritten_captions)
     spoiler_flags = [has_media_spoiler(item, media_type, "json") for item, _, media_type in file_entries]
     media = build_user_media_group(group_items, normalized_captions, {}, spoiler_flags)
-    kwargs = {"chat_id": target_id, "media": media}
+    kwargs = {"chat_id": chat_id, "media": media}
     if reply_to_id:
         kwargs["reply_to_message_id"] = reply_to_id
     kwargs["progress"] = build_pyro_progress_callback(
@@ -461,7 +463,11 @@ async def send_json_media_group(
     clone_fallback_to_user: bool,
     hash_perturb: bool = False,
     include_external_source_header: bool = False,
+    chat_id: int | None = None,
 ):
+    # chat_id 为实际发送目的地（收藏夹目标 = 当前辅助账号 own id），target_id 为 DB 键（sentinel）。
+    if chat_id is None:
+        chat_id = target_id
     group_ids = [int(item.get("id") or 0) for item in group]
     first_msg = group[0]
     first_id = group_ids[0] if group_ids else 0
@@ -506,7 +512,7 @@ async def send_json_media_group(
         sent_group = None
 
         if upload_target["sender"] == "user":
-            sent_group = await _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id)
+            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
         else:
             for _ in range(3):
                 if sync_state["stop_requested"]:
@@ -516,7 +522,7 @@ async def send_json_media_group(
                 try:
                     sent_group = await execute_with_network_retry(
                         lambda: upload_target["client"].send_media_group(
-                            target_id,
+                            chat_id,
                             media_list,
                             reply_to_message_id=reply_to_id,
                         ),
@@ -534,7 +540,7 @@ async def send_json_media_group(
                     if _is_request_entity_too_large(exc):
                         if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 上传体积超限，已改用辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
                             break
                         raise
                     retry_after = _parse_retry_after_seconds(exc)
@@ -548,7 +554,7 @@ async def send_json_media_group(
                         )
                         if upload_target["sender"] == "user":
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 频控，已切换辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
                             break
                         continue
                     if bot_engine.should_disable_upload_bot_for_error(exc):
@@ -561,13 +567,13 @@ async def send_json_media_group(
                         )
                         if upload_target["sender"] == "user":
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | 当前 Bot 已失效，已切换辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
                             break
                         continue
                     raise
             if sent_group is None and not sync_state["stop_requested"] and _json_should_fallback_to_user(sender, clone_fallback_to_user):
                 await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 发送失败，已改用辅助账号发送媒体组")
-                sent_group = await _send_json_group_via_user(group, target_id, rewritten_captions, file_entries, reply_to_id)
+                sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
 
         if sent_group is None:
             return None
@@ -606,6 +612,7 @@ async def process_json_sync(
     media_group_window_seconds: int = JSON_MEDIA_GROUP_WINDOW_SECONDS,
     clone_fallback_to_user: bool = True,
     hash_perturb: bool = False,
+    target_type: str = "channel",
 ):
     if not json_path or not os.path.exists(json_path):
         await log_sync_error("JSON 文件不存在或路径无效", ValueError(json_path or ""))
@@ -621,7 +628,14 @@ async def process_json_sync(
     messages = data.get("messages", [])
     json_dir = os.path.dirname(os.path.abspath(json_path))
     try:
-        target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
+        if str(target_type or "").strip() == "saved":
+            # 收藏夹目标：跳过 resolve_chat_id（sentinel 不是真实 Telegram id），
+            # 发送 chat_id 即时解析为当前辅助账号 own id；sender 恒定 user。
+            target_id = SAVED_MESSAGES_TARGET_ID
+            chat_id = await resolve_destination_chat_id("saved", target_id, bot_engine.pyro_user_app)
+        else:
+            target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
+            chat_id = target_id
     except Exception as exc:
         await log_sync_error("JSON 任务中止", RuntimeError(format_channel_check_error(exc, subject="目标频道信息")))
         return
@@ -678,6 +692,7 @@ async def process_json_sync(
                 clone_fallback_to_user,
                 hash_perturb,
                 include_external_source_header,
+                chat_id=chat_id,
             )
             if result is not None:
                 sync_state["current"] += max(0, len(group) - 1)
@@ -752,7 +767,7 @@ async def process_json_sync(
 
                         if upload_target["sender"] == "user":
                             sent = await _send_json_single_via_user(
-                                target_id,
+                                chat_id,
                                 media_type,
                                 media_path,
                                 caption,
@@ -771,27 +786,27 @@ async def process_json_sync(
                                 try:
                                     if media_type == "photo":
                                         send_coro = lambda: upload_target["client"].send_photo(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
                                         )
                                     elif media_type == "video":
                                         send_coro = lambda: upload_target["client"].send_video(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
                                         )
                                     elif media_type == "animation":
                                         send_coro = lambda: upload_target["client"].send_animation(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "audio":
                                         send_coro = lambda: upload_target["client"].send_audio(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "voice":
                                         send_coro = lambda: upload_target["client"].send_voice(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "sticker":
                                         sent = await execute_with_network_retry(
-                                            lambda: upload_target["client"].send_sticker(target_id, file, reply_to_message_id=reply_to_id),
+                                            lambda: upload_target["client"].send_sticker(chat_id, file, reply_to_message_id=reply_to_id),
                                             action_label=f"JSON 贴纸发送 {msg_id}",
                                             sync_state=sync_state,
                                             log_tag="JSON_NETWORK_RETRY",
@@ -800,7 +815,7 @@ async def process_json_sync(
                                         break
                                     else:
                                         send_coro = lambda: upload_target["client"].send_document(
-                                            target_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
+                                            chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     if media_type != "sticker":
                                         sent = await execute_with_network_retry(
@@ -823,7 +838,7 @@ async def process_json_sync(
                                             if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 上传体积超限，已改用辅助账号发送")
                                                 sent = await _send_json_single_via_user(
-                                                    target_id,
+                                                    chat_id,
                                                     media_type,
                                                     media_path,
                                                     caption,
@@ -846,7 +861,7 @@ async def process_json_sync(
                                             if upload_target["sender"] == "user":
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 频控，已切换辅助账号发送")
                                                 sent = await _send_json_single_via_user(
-                                                    target_id,
+                                                    chat_id,
                                                     media_type,
                                                     media_path,
                                                     caption,
@@ -868,7 +883,7 @@ async def process_json_sync(
                                             if upload_target["sender"] == "user":
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | 当前 Bot 已失效，已切换辅助账号发送")
                                                 sent = await _send_json_single_via_user(
-                                                    target_id,
+                                                    chat_id,
                                                     media_type,
                                                     media_path,
                                                     caption,
@@ -884,7 +899,7 @@ async def process_json_sync(
                                         await db.add_msg_log("JSON_STICKER_AS_IMAGE", f"消息ID:{msg_id} | 贴纸发送失败，已改为缩略图图片发送: {exc}")
                                         sent = await _execute_with_retry(
                                             lambda: bot_engine.aiogram_bot.send_photo(
-                                                target_id,
+                                                chat_id,
                                                 FSInputFile(thumb_path),
                                                 caption=caption,
                                                 parse_mode="HTML",
@@ -897,7 +912,7 @@ async def process_json_sync(
                                         if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 上传体积超限，已改用辅助账号发送")
                                             sent = await _send_json_single_via_user(
-                                                target_id,
+                                                chat_id,
                                                 media_type,
                                                 media_path,
                                                 caption,
@@ -920,7 +935,7 @@ async def process_json_sync(
                                         if upload_target["sender"] == "user":
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 频控，已切换辅助账号发送")
                                             sent = await _send_json_single_via_user(
-                                                target_id,
+                                                chat_id,
                                                 media_type,
                                                 media_path,
                                                 caption,
@@ -942,7 +957,7 @@ async def process_json_sync(
                                         if upload_target["sender"] == "user":
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | 当前 Bot 已失效，已切换辅助账号发送")
                                             sent = await _send_json_single_via_user(
-                                                target_id,
+                                                chat_id,
                                                 media_type,
                                                 media_path,
                                                 caption,
@@ -957,7 +972,7 @@ async def process_json_sync(
                             if sent is None and not sync_state["stop_requested"] and _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 发送失败，已改用辅助账号发送")
                                 sent = await _send_json_single_via_user(
-                                    target_id,
+                                    chat_id,
                                     media_type,
                                     media_path,
                                     caption,
@@ -983,13 +998,13 @@ async def process_json_sync(
                         wait_for_available_bot=not _json_should_fallback_to_user(sender, clone_fallback_to_user),
                     )
                     if upload_target["sender"] == "user":
-                        sent = await _send_json_text_via_user(target_id, text, reply_to_id)
+                        sent = await _send_json_text_via_user(chat_id, text, reply_to_id)
                     else:
                         sent = await _send_json_text_via_bot(
                             upload_target,
                             sender,
                             clone_fallback_to_user,
-                            target_id,
+                            chat_id,
                             text,
                             reply_to_id,
                             msg_id,

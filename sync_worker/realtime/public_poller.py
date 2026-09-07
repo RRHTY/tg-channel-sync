@@ -4,6 +4,11 @@ import asyncio
 
 import database as db
 from app_config import get_config
+from services.sync_services import (
+    begin_saved_messages_operation,
+    finish_saved_messages_operation,
+    resolve_destination_chat_id,
+)
 
 PROCESSED_SYNC_RESULTS = {"sent_mapped", "sent_unmapped", "skipped"}
 
@@ -43,8 +48,44 @@ async def load_public_channel_new_messages(user_app, source_ref: str, last_messa
     return messages
 
 
+async def _process_public_target(
+    bot,
+    user_app,
+    source_id: int,
+    target_mapping: dict,
+    message_group: list,
+    include_external_source_header: bool,
+    source_username_override: str,
+):
+    from sync_worker.clone.process import sync_media_group, sync_single_message
+
+    target_id = int(target_mapping["target_id"])
+    target_type = str(target_mapping.get("target_type", "") or "channel")
+    saved_operation = await begin_saved_messages_operation(target_type, target_id)
+    try:
+        # 收藏夹目标：chat_id 为当前辅助账号 own id（即时解析），target_id 仍是 DB 键（sentinel）。
+        chat_id = await resolve_destination_chat_id(target_type, target_id, user_app)
+        common_kwargs = {
+            "hash_perturb": bool(target_mapping.get("realtime_hash_perturb", False)),
+            "clone_fallback_to_user": bool(target_mapping.get("realtime_fallback_to_user", True)),
+            "include_external_source_header": include_external_source_header,
+            "source_username_override": source_username_override,
+        }
+        if len(message_group) == 1:
+            return await sync_single_message(
+                "api", "user", user_app, bot, source_id, target_id, message_group[0], 0.5, False, **common_kwargs,
+                chat_id=chat_id,
+            )
+        return await sync_media_group(
+            "api", "user", user_app, bot, source_id, target_id, message_group, 0.5, False, **common_kwargs,
+            chat_id=chat_id,
+        )
+    finally:
+        await finish_saved_messages_operation(saved_operation)
+
+
 async def process_public_channel_mapping_group(bot, user_app, group: dict):
-    from sync_worker.clone.process import group_messages, sync_media_group, sync_single_message
+    from sync_worker.clone.process import group_messages
     from sync_worker.runtime import sync_state
 
     if sync_state.get("is_syncing"):
@@ -69,20 +110,15 @@ async def process_public_channel_mapping_group(bot, user_app, group: dict):
             group_max_id = max(int(getattr(item, "id", 0) or 0) for item in message_group)
             for target_mapping in group["mappings"]:
                 target_id = int(target_mapping["target_id"])
-                common_kwargs = {
-                    "hash_perturb": bool(target_mapping.get("realtime_hash_perturb", False)),
-                    "clone_fallback_to_user": bool(target_mapping.get("realtime_fallback_to_user", True)),
-                    "include_external_source_header": include_external_source_header,
-                    "source_username_override": source_username_override,
-                }
-                if len(message_group) == 1:
-                    result = await sync_single_message(
-                        "api", "user", user_app, bot, source_id, target_id, message_group[0], 0.5, False, **common_kwargs
-                    )
-                else:
-                    result = await sync_media_group(
-                        "api", "user", user_app, bot, source_id, target_id, message_group, 0.5, False, **common_kwargs
-                    )
+                result = await _process_public_target(
+                    bot,
+                    user_app,
+                    source_id,
+                    target_mapping,
+                    message_group,
+                    include_external_source_header,
+                    source_username_override,
+                )
                 if result not in PROCESSED_SYNC_RESULTS:
                     raise RuntimeError(
                         f"公开频道消息处理未完成: source={source_id} target={target_id} group_max_id={group_max_id} result={result}"

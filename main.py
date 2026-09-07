@@ -19,7 +19,13 @@ from app_paths import ensure_runtime_dirs, static_dir, temp_dir
 from server_runtime import launch_browser_when_ready, resolve_server_config, reuse_existing_instance_or_exit, should_auto_open_browser
 from services.channel_mapping_sources import resolve_mapping_source
 from services.logging_config import configure_terminal_logging
-from services.sync_services import format_channel_check_error, normalize_channel_username, resolve_chat_id
+from services.sync_services import (
+    SAVED_MESSAGES_TARGET_ID,
+    format_channel_check_error,
+    is_saved_messages_target,
+    normalize_channel_username,
+    resolve_chat_id,
+)
 from services.version_service import GITHUB_REPO, get_local_version, get_remote_version_info, is_version_at_least
 from sync_worker.runtime import sync_state
 
@@ -568,6 +574,7 @@ async def get_mappings():
             "source_mode": row[5] or "bot",
             "source_ref": row[6] or "",
             "last_polled_message_id": int(row[7] or 0),
+            "target_type": row[8] or "channel",
         }
         for row in await db.get_all_channel_mappings()
     ]
@@ -589,6 +596,7 @@ async def add_mapping(
     realtime_sender: str = Form("bot"),
     realtime_fallback_to_user: str = Form("1"),
     realtime_hash_perturb: str = Form("0"),
+    target_type: str = Form("channel"),
 ):
     try:
         loaded_bot_engine = _get_loaded_or_patched_bot_engine()
@@ -598,14 +606,26 @@ async def add_mapping(
             loaded_bot_engine = await _ensure_bot_engine_loaded()
         if loaded_bot_engine.aiogram_bot is None and _bot_is_initializing():
             return {"status": "error", "message": "Bot 初始化中，请稍后重试"}
+        is_saved_target = str(target_type or "").strip() == "saved"
         allow_public_user_fallback = realtime_fallback_to_user == "1"
         src, source_mode, source_ref = await resolve_mapping_source(
             loaded_bot_engine,
             source_id,
             allow_public_user_fallback=allow_public_user_fallback,
         )
-        tgt = await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
-        mapping_sender = "user" if source_mode == "public_user" else realtime_sender
+        if is_saved_target:
+            # 收藏夹目标：Bot 无法发送到 Saved Messages，恒定由辅助账号(user)发送。
+            # target_id 存 sentinel 占位值（账号无关、跨重登录稳定），发送时再即时解析当前 own id。
+            user_app = getattr(loaded_bot_engine, "pyro_user_app", None)
+            if user_app is None or not getattr(user_app, "is_initialized", False):
+                message = "收藏夹目标需要先完成辅助账号登录"
+                await db.add_sys_log("WARNING", f"添加频道映射失败: {message} ({src} -> 收藏夹)")
+                return {"status": "error", "message": message}
+            tgt = SAVED_MESSAGES_TARGET_ID
+            mapping_sender = "user"
+        else:
+            tgt = await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
+            mapping_sender = "user" if source_mode == "public_user" else realtime_sender
         if src == tgt:
             message = "源频道和目标频道不能相同"
             await db.add_sys_log("WARNING", f"添加频道映射失败: {message} ({src} -> {tgt})")
@@ -630,11 +650,13 @@ async def add_mapping(
             source_mode=source_mode,
             source_ref=source_ref,
             last_polled_message_id=last_polled_message_id,
+            target_type="saved" if is_saved_target else "channel",
         )
         if source_mode == "public_user":
             _ensure_public_channel_polling(loaded_bot_engine)
         mode_label = f"public:@{source_ref}" if source_mode == "public_user" else str(src)
-        await db.add_sys_log("INFO", f"添加频道映射: {mode_label} -> {tgt}")
+        target_label = "收藏夹" if is_saved_target else str(tgt)
+        await db.add_sys_log("INFO", f"添加频道映射: {mode_label} -> {target_label}")
         return {"status": "success", "message": "映射规则添加成功"}
     except Exception as exc:
         message = format_channel_check_error(exc)
@@ -736,6 +758,7 @@ async def start_sync(
     force_send: str = Form("0"),
     hash_perturb: str = Form("0"),
     clone_fallback_to_user: str = Form("1"),
+    target_type: str = Form("channel"),
 ):
     if sync_state["is_syncing"]:
         return {"status": "error", "message": "任务正在运行中"}
@@ -748,6 +771,13 @@ async def start_sync(
         if _bot_is_initializing():
             return {"status": "error", "message": "Bot 初始化中，请稍后重试"}
         return {"status": "error", "message": "请先在设置中配置并重启 BOT"}
+    is_saved_target = str(target_type or "").strip() == "saved"
+    if is_saved_target:
+        # 收藏夹目标：Bot 无法发送到 Saved Messages，恒定由辅助账号(user)发送。
+        user_app = getattr(loaded_bot_engine, "pyro_user_app", None)
+        if user_app is None or not getattr(user_app, "is_initialized", False):
+            return {"status": "error", "message": "收藏夹目标需要先完成辅助账号登录"}
+        sender = "user"
     if mode in ["api", "clone"] and not loaded_bot_engine.pyro_user_app:
         return {"status": "error", "message": "请先完成辅助账号登录"}
     if mode == "json" and sender == "user" and not loaded_bot_engine.pyro_user_app:
@@ -756,7 +786,8 @@ async def start_sync(
     try:
         if mode in {"api", "clone"}:
             await resolve_chat_id(loaded_bot_engine.aiogram_bot, source_id)
-        await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
+        if not is_saved_target:
+            await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
     except Exception as exc:
         message = format_channel_check_error(exc)
         await db.add_sys_log("WARNING", f"启动任务失败: {message}")
@@ -784,17 +815,19 @@ async def start_sync(
         max(1, int(json_media_group_window_seconds or 3)),
         hash_perturb == "1",
         clone_fallback_to_user == "1",
+        target_type,
     )
 
+    target_label = "收藏夹" if is_saved_target else target_id
     if mode == "json":
         normalized_source_username = normalize_channel_username(json_source_username)
         await db.add_sys_log(
             "INFO",
-            f"启动 JSON 任务 -> {target_id} | 发送身份:{'辅助账号' if sender == 'user' else '机器人'}"
+            f"启动 JSON 任务 -> {target_label} | 发送身份:{'辅助账号' if sender == 'user' else '机器人'}"
             + (f" | 源频道用户名:@{normalized_source_username}" if normalized_source_username else ""),
         )
     else:
-        await db.add_sys_log("INFO", f"启动 {mode.upper()} 任务: {source_id} -> {target_id}")
+        await db.add_sys_log("INFO", f"启动 {mode.upper()} 任务: {source_id} -> {target_label}")
     return {"status": "success", "message": f"启动 {mode.upper()} 任务成功"}
 
 
