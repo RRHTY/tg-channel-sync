@@ -27,7 +27,7 @@
       this.currentView = this.setupStatus.needs_setup ? "setup" : "home";
     },
     navButtonClass(view) {
-      return this.currentView === view ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200";
+      return this.currentView === view ? "nav-active" : "nav-idle";
     },
     navigateTo(view) {
       this.currentView = view;

@@ -85,6 +85,23 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertIn("prefers-reduced-motion: reduce", content)
         self.assertIn("@media (max-width: 640px)", content)
 
+    def test_visual_theme_uses_project_palette(self):
+        content = (ROOT / "static" / "app.css").read_text(encoding="utf-8").lower()
+
+        self.assertIn("--primary: #aabb22", content)
+        self.assertIn("--warm: #fff8b2", content)
+        self.assertIn("--info: #52c4ee", content)
+        self.assertIn(".status-tone-positive", content)
+        self.assertIn(".version-badge-update", content)
+
+    def test_templates_use_theme_classes_instead_of_old_primary_colors(self):
+        app_content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        methods_content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("text-indigo-700", app_content)
+        self.assertNotIn("bg-indigo-600", app_content)
+        self.assertIn('"nav-active"', methods_content)
+
     def test_view_navigation_returns_to_page_top(self):
         content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
 

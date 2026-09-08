@@ -29,12 +29,12 @@ const SetupWizard = {
 
 const StatusOverview = {
   props:["appInfo","status"],
-  methods:{ tone(v){ if(["已连接","已登录","运行中"].includes(v)) return "border-green-200 bg-green-50 text-green-700"; if(["初始化中","连接超时","等待验证码","等待两步验证","需要登录"].includes(v)) return "border-amber-200 bg-amber-50 text-amber-700"; if(["启动失败","未配置"].includes(v)) return "border-red-200 bg-red-50 text-red-700"; return "border-blue-200 bg-blue-50 text-blue-700"; } },
+  methods:{ tone(v){ if(["已连接","已登录","运行中"].includes(v)) return "status-tone-positive"; if(["初始化中","连接超时","等待验证码","等待两步验证","需要登录"].includes(v)) return "status-tone-warning"; if(["启动失败","未配置"].includes(v)) return "status-tone-negative"; return "status-tone-info"; } },
   template:`<section class="status-grid" aria-label="连接与任务状态">
     <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">Bot</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div class="status-detail">{{ appInfo.bot.name || '未连接' }}</div></div>
     <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">辅助账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else class="status-detail">{{ appInfo.user.name || '未登录' }}</div></div>
     <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : '空闲' }}</div><div class="status-detail">{{ status.mode || '等待任务' }}</div></div>
-    <div class="status-card text-slate-700"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
+    <div class="status-card status-tone-neutral"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
   </section>`
 };
 
@@ -101,7 +101,7 @@ const SyncPanel = {
   },
   template:`<div class="card">
     <div class="panel-heading"><div><div class="panel-kicker">History</div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
-    <div class="progress-shell"><template v-if="status.is_syncing"><div class="mb-2 flex justify-between text-xs font-semibold text-indigo-700"><span>{{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="mb-3 h-1.5 w-full rounded-full bg-indigo-100"><div class="h-1.5 rounded-full bg-indigo-600 transition-all" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
+    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
     <div class="form-surface" :class="{ 'opacity-50 pointer-events-none': status.is_syncing }">
       <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">API 复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载重传</button></div>
       <div v-if="form.mode !== 'json'" class="form-row"><field-group label="源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="目标频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>

@@ -198,13 +198,13 @@ const LogPanel = {
   methods: {
     levelClass(value) {
       const text = String(value || "");
-      if (text === "ERROR" || text.includes("ERROR") || text.includes("DROP")) return "text-red-300 bg-red-950/60 border-red-900/70";
-      if (text === "WARNING" || text.includes("WARN") || text.includes("FALLBACK")) return "text-amber-300 bg-amber-950/50 border-amber-900/70";
-      if (text === "SUCCESS" || text.includes("SEND") || text.includes("MAP")) return "text-emerald-300 bg-emerald-950/50 border-emerald-900/70";
-      if (text === "HASH_PERTURB_SKIP") return "text-sky-200 bg-slate-800/70 border-slate-700";
-      if (text.includes("SKIP")) return "text-yellow-200 bg-yellow-950/40 border-yellow-900/60";
-      if (text.includes("REWRITE")) return "text-cyan-300 bg-cyan-950/40 border-cyan-900/60";
-      return "text-sky-200 bg-slate-800/70 border-slate-700";
+      if (text === "ERROR" || text.includes("ERROR") || text.includes("DROP")) return "log-level-error";
+      if (text === "WARNING" || text.includes("WARN") || text.includes("FALLBACK")) return "log-level-warning";
+      if (text === "SUCCESS" || text.includes("SEND") || text.includes("MAP")) return "log-level-success";
+      if (text === "HASH_PERTURB_SKIP") return "log-level-info";
+      if (text.includes("SKIP")) return "log-level-skip";
+      if (text.includes("REWRITE")) return "log-level-rewrite";
+      return "log-level-info";
     },
     label(log) {
       return this.kind === "message" ? log.action : log.level;

@@ -6,7 +6,7 @@
     <title>杏铃同步台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="/static/app.css?v=2">
+    <link rel="stylesheet" href="/static/app.css?v=3">
 </head>
 <body class="text-gray-800 font-sans">
 <div id="app" class="app-shell">
@@ -28,11 +28,10 @@
                     v-if="versionInfo.current_version && (!versionInfo.up_to_date || versionInfo.status === 'error')"
                     :href="versionInfo.url || 'https://github.com/RRHTY/tg-channel-sync'"
                     target="_blank"
-                    class="text-xs px-2 py-1 rounded-full border transition"
+                    class="version-badge"
                     :class="versionInfo.status === 'error'
-                        ? 'border-slate-200 bg-slate-50 text-slate-500'
-                        : 'border-amber-200 bg-amber-50 text-amber-700'"
-                    "
+                        ? 'version-badge-muted'
+                        : 'version-badge-update'"
                     :title="versionInfo.status === 'error'
                         ? ('当前版本 ' + versionInfo.current_version + '，新版检测失败')
                         : ('当前 ' + versionInfo.current_version + ' / 最新 ' + (versionInfo.latest_version || '未知'))"
@@ -92,9 +91,9 @@
         <span>v{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
-<script src="/static/ui-components.js?v=2"></script>
+<script src="/static/ui-components.js?v=3"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js?v=2"></script>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app-methods.js?v=3"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>
