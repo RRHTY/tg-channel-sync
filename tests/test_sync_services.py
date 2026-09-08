@@ -283,6 +283,11 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(history._is_chat_forwards_restricted(Exception("The chat restricts forwarding content")))
         self.assertFalse(history._is_chat_forwards_restricted(Exception("other error")))
 
+    def test_pyrofork_messages_compat_defaults_topics(self):
+        messages = bot_engine.raw.types.messages.Messages(messages=[], chats=[], users=[])
+
+        self.assertEqual(messages.topics, [])
+
     def test_build_temp_download_path_uses_message_id_prefix(self):
         media = type("Media", (), {"file_name": "PixPin_2026-04-17_19-36-44.mp4"})()
         msg_a = type("Msg", (), {"id": 77, "video": media})()

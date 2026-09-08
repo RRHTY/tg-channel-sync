@@ -49,6 +49,29 @@ from sync_worker.senders import (
     should_fallback_to_user,
 )
 
+
+def _patch_pyrofork_messages_topics_default() -> None:
+    """Pyrofork TL layer 220 起 raw.types.messages.Messages 构造函数要求 topics 参数，
+    但其内部 copy_media_group / send_media_group / send_paid_media 发送成功后手动构造
+    该类型时漏传 topics，导致回包解析抛 TypeError（消息实际已发送、映射无法落库）。
+    这里给 topics 补默认值，兼容旧版库的全部手动构造点；read() 反序列化路径显式传值不受影响。"""
+    messages_cls = raw.types.messages.Messages
+    original_init = messages_cls.__init__
+
+    def _init_with_topics_default(self, *, messages, chats, users, topics=None):
+        original_init(
+            self,
+            messages=messages,
+            chats=chats,
+            users=users,
+            topics=topics if topics is not None else [],
+        )
+
+    messages_cls.__init__ = _init_with_topics_default
+
+
+_patch_pyrofork_messages_topics_default()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("tg-channel-sync.bot")
 
