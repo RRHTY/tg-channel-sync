@@ -66,6 +66,18 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertIn('class="log-switch"', content)
         self.assertIn('v-if="activeKind === \'system\'"', content)
 
+    def test_log_actions_share_the_same_header_row(self):
+        content = (ROOT / "static" / "ui-components.js").read_text(encoding="utf-8")
+
+        action_group = content.index('class="log-actions"')
+        export_button = content.index("$emit('export')", action_group)
+        bottom_button = content.index("scrollToBottom", export_button)
+        clear_button = content.index("$emit('clear')", bottom_button)
+        heading_end = content.index("</div>", clear_button)
+        self.assertLess(export_button, bottom_button)
+        self.assertLess(bottom_button, clear_button)
+        self.assertLess(clear_button, heading_end)
+
     def test_visual_system_has_keyboard_and_motion_accessibility(self):
         content = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
 

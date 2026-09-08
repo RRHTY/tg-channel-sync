@@ -689,6 +689,7 @@ textarea.input-box {
 .status-value { margin-top: 0.35rem; overflow: hidden; color: currentColor; font-size: 1rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .status-detail { margin-top: 0.18rem; overflow: hidden; color: #667085; font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.log-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 0.45rem; }
 .panel-kicker { color: var(--primary); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }
 .panel-title { margin-top: 0.2rem; color: #101828; font-size: 1.15rem; font-weight: 800; }
 .panel-description { margin-top: 0.25rem; color: #667085; font-size: 0.78rem; line-height: 1.5; }
@@ -793,6 +794,9 @@ textarea.input-box {
     .form-row { grid-template-columns: 1fr; }
     .mode-button { min-height: 2.8rem; padding-inline: 0.25rem; font-size: 0.72rem; }
     .panel-heading { margin-bottom: 0.8rem; }
+    .log-workspace .panel-heading { align-items: stretch; flex-direction: column; }
+    .log-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .log-actions > * { width: 100%; white-space: nowrap; }
     .mapping-scroll, .rule-scroll { max-height: none; }
     .log-panel { height: 16rem; }
     .app-footer { align-items: flex-start; flex-direction: column; gap: 0.2rem; }

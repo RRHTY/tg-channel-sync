@@ -225,15 +225,11 @@ const LogPanel = {
         <h2 class="panel-title">{{ title }}</h2>
         <p class="panel-description">{{ description }}</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="log-actions">
         <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">导出</button>
+        <button @click="scrollToBottom" class="btn-secondary btn-inline !px-3 !py-1 text-xs">跳至底部</button>
         <button @click="$emit('clear')" class="delete-action">清理</button>
       </div>
-    </div>
-    <div class="mb-2 flex justify-end">
-        <div class="flex items-center gap-2">
-          <button @click="scrollToBottom" class="btn-secondary btn-inline !px-3 !py-1 text-xs">跳至底部</button>
-        </div>
     </div>
     <div :id="panelId" class="log-panel">
       <div v-for="log in logs" :key="log.id" class="border-b border-slate-800 pb-2 text-slate-200">
