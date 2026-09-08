@@ -29,6 +29,15 @@
     navButtonClass(view) {
       return this.currentView === view ? "nav-active" : "nav-idle";
     },
+    applyTheme(theme, remember = false) {
+      const supported = ["clover", "sakura", "mint", "starlight"];
+      const normalized = supported.includes(String(theme || "").toLowerCase()) ? String(theme).toLowerCase() : "clover";
+      document.documentElement.dataset.theme = normalized;
+      if (remember) {
+        try { localStorage.setItem("tgcs-theme", normalized); } catch (_) {}
+      }
+      return normalized;
+    },
     navigateTo(view) {
       this.currentView = view;
       this.$nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
@@ -85,6 +94,7 @@
     async loadConfig() {
       this.configForm = api.ensureSuccess(await api.getJson("/api/config"), "加载配置失败");
       this.normalizeConfigForm();
+      this.configForm.app.theme = this.applyTheme(this.configForm.app.theme, true);
     },
     async loadUserAuthStatus() {
       this.userAuth = api.ensureSuccess(await api.getJson("/api/user_auth/status"), "加载辅助账号状态失败");
@@ -108,6 +118,7 @@
         if (showToast) this.showToast(res.message);
         this.configForm = res.config;
         this.normalizeConfigForm();
+        this.configForm.app.theme = this.applyTheme(this.configForm.app.theme, true);
         await this.loadSetupStatus();
         await this.loadUserAuthStatus();
         return res;

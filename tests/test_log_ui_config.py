@@ -102,6 +102,38 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertNotIn("bg-indigo-600", app_content)
         self.assertIn('"nav-active"', methods_content)
 
+    def test_settings_exposes_live_theme_selection(self):
+        app_content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        methods_content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
+        index_content = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+        for name in ("CLover", "Sakura Pop", "Mint Melody", "Starlight"):
+            self.assertIn(name, app_content)
+        self.assertIn('@preview-theme="applyTheme"', index_content)
+        self.assertIn("applyTheme(theme, remember = false)", methods_content)
+        self.assertIn("document.documentElement.dataset.theme", methods_content)
+        self.assertIn("localStorage.setItem", methods_content)
+        self.assertEqual(methods_content.count("this.applyTheme(this.configForm.app.theme, true)"), 2)
+        self.assertIn("onThemeKeydown(event, index)", app_content)
+        self.assertIn(":tabindex=\"config.app.theme === theme.id ? 0 : -1\"", app_content)
+
+    def test_styles_define_every_supported_theme(self):
+        content = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+
+        for theme in ("clover", "sakura", "mint", "starlight"):
+            self.assertIn(f':root[data-theme="{theme}"]', content)
+        self.assertIn(".theme-picker", content)
+        self.assertIn(".theme-option-active", content)
+        self.assertIn("--primary-ink:", content)
+        self.assertIn("--info-ink:", content)
+
+    def test_saved_theme_is_restored_before_styles_load(self):
+        content = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+        restore_script = content.index('localStorage.getItem("tgcs-theme")')
+        stylesheet = content.index('rel="stylesheet"')
+        self.assertLess(restore_script, stylesheet)
+
     def test_view_navigation_returns_to_page_top(self):
         content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
 

@@ -93,6 +93,17 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(config["sync"]["system_log_retention_limit"], 1000)
         self.assertEqual(config["sync"]["message_log_retention_limit"], 5000)
         self.assertFalse(config["app"]["debug_terminal_logs"])
+        self.assertEqual(config["app"]["theme"], "clover")
+
+    def test_theme_accepts_supported_values_and_falls_back_to_clover(self):
+        for theme in ("clover", "sakura", "mint", "starlight"):
+            with self.subTest(theme=theme):
+                config = app_config.save_config({"app": {"theme": theme}})
+                self.assertEqual(config["app"]["theme"], theme)
+
+        config = app_config.save_config({"app": {"theme": "unknown"}})
+
+        self.assertEqual(config["app"]["theme"], "clover")
 
     def test_debug_terminal_logs_normalizes_to_bool(self):
         config = app_config.save_config({"app": {"debug_terminal_logs": 1}})

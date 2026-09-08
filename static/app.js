@@ -210,11 +210,65 @@ const UserAuthPanel = {
 
 const SettingsPanel = {
   props:["config","saving","userAuth","authSubmitting","sendCodeCooldown"],
+  data(){ return { themes:[
+    { id:"clover", name:"CLover", mark:"✦", colors:["#aabb22", "#fff8b2", "#52c4ee"] },
+    { id:"sakura", name:"Sakura Pop", mark:"❀", colors:["#f27aa6", "#fff0b8", "#79cef2"] },
+    { id:"mint", name:"Mint Melody", mark:"♫", colors:["#51cbb0", "#ffd1e7", "#6bc8ff"] },
+    { id:"starlight", name:"Starlight", mark:"★", colors:["#8b7cf6", "#ffe9a8", "#61dbe9"] },
+  ] }; },
+  methods:{
+    chooseTheme(theme){
+      this.config.app.theme = theme;
+      this.$emit("preview-theme", theme);
+    },
+    onThemeKeydown(event, index){
+      const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+      if(!keys.includes(event.key)) return;
+      event.preventDefault();
+      let nextIndex = index;
+      if(event.key === "Home") nextIndex = 0;
+      else if(event.key === "End") nextIndex = this.themes.length - 1;
+      else if(event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (index + 1) % this.themes.length;
+      else nextIndex = (index - 1 + this.themes.length) % this.themes.length;
+      const nextTheme = this.themes[nextIndex].id;
+      this.chooseTheme(nextTheme);
+      this.$nextTick(() => document.querySelector(`[data-theme-option="${nextTheme}"]`)?.focus());
+    },
+  },
   // Legacy layout signature kept for UI regression tests:
   // components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint, UserAuthPanel }
   components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint, UserAuthPanel, SettingSectionNav, SettingGroup, ToggleField, FieldBadge },
   template:`
     <div class="settings-shell">
+      <app-card id="settings-appearance" class="settings-section-card">
+        <div class="settings-section-header">
+          <div class="settings-section-title-row">
+            <h2 class="settings-section-title">界面主题</h2>
+            <field-badge text="即时预览"></field-badge>
+          </div>
+        </div>
+        <div class="theme-picker" role="radiogroup" aria-label="界面主题">
+          <button
+            v-for="(theme, index) in themes"
+            :key="theme.id"
+            type="button"
+            role="radio"
+            :aria-checked="config.app.theme === theme.id"
+            :tabindex="config.app.theme === theme.id ? 0 : -1"
+            :data-theme-option="theme.id"
+            class="theme-option"
+            :class="{ 'theme-option-active': config.app.theme === theme.id }"
+            :style="{ '--swatch-primary': theme.colors[0], '--swatch-warm': theme.colors[1], '--swatch-info': theme.colors[2] }"
+            @click="chooseTheme(theme.id)"
+            @keydown="onThemeKeydown($event, index)"
+          >
+            <span class="theme-mark" aria-hidden="true">{{ theme.mark }}</span>
+            <span class="theme-option-name">{{ theme.name }}</span>
+            <span class="theme-swatches" aria-hidden="true"><i></i><i></i><i></i></span>
+          </button>
+        </div>
+      </app-card>
+
       <app-card id="settings-basic" class="settings-section-card">
         <div class="settings-section-header">
           <div class="settings-section-title-row">
@@ -414,7 +468,7 @@ const SettingsPanel = {
 
 createApp({
   components:{ SetupWizard, StatusOverview, ChannelMapping, SyncPanel, LogViewer, SettingsPanel, GlobalFilters, ToastBanner },
-  data(){ return { currentView:"home", appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuth:{ status:"idle", status_label:"未登录", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
+  data(){ return { currentView:"home", appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false, theme:"clover" } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuth:{ status:"idle", status_label:"未登录", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
   async mounted(){
     this.startSendCodeTimer();
     try {

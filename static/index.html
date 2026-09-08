@@ -1,12 +1,20 @@
 ﻿<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="clover">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>杏铃同步台</title>
+    <script>
+        try {
+            const savedTheme = localStorage.getItem("tgcs-theme");
+            if (["clover", "sakura", "mint", "starlight"].includes(savedTheme)) {
+                document.documentElement.dataset.theme = savedTheme;
+            }
+        } catch (_) {}
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="/static/app.css?v=3">
+    <link rel="stylesheet" href="/static/app.css?v=4">
 </head>
 <body class="text-gray-800 font-sans">
 <div id="app" class="app-shell">
@@ -84,16 +92,16 @@
         </div>
     </template>
 
-    <settings-panel v-else :config="configForm" :saving="configSaving" :user-auth="userAuth" :auth-submitting="authSubmitting" :send-code-cooldown="sendCodeCooldown" @save-config="saveSettingsPage" @save-restart="saveAndRestart" @send-code="sendUserCode" @verify-code="verifyUserCode" @submit-password="submitUserPassword" @cancel-auth="cancelUserAuth" @switch-account="switchUserAccount"></settings-panel>
+    <settings-panel v-else :config="configForm" :saving="configSaving" :user-auth="userAuth" :auth-submitting="authSubmitting" :send-code-cooldown="sendCodeCooldown" @preview-theme="applyTheme" @save-config="saveSettingsPage" @save-restart="saveAndRestart" @send-code="sendUserCode" @verify-code="verifyUserCode" @submit-password="submitUserPassword" @cancel-auth="cancelUserAuth" @switch-account="switchUserAccount"></settings-panel>
 
     <footer class="app-footer">
         <span>杏铃同步台 · Telegram 频道同步、迁移与重传</span>
         <span>v{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
-<script src="/static/ui-components.js?v=3"></script>
+<script src="/static/ui-components.js?v=4"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js?v=3"></script>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app-methods.js?v=4"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

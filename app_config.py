@@ -46,6 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "portable_mode": True,
         "log_level": "INFO",
         "debug_terminal_logs": False,
+        "theme": "clover",
     },
 }
 
@@ -151,6 +152,8 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     app["portable_mode"] = _normalize_bool(app.get("portable_mode", True), True)
     app["log_level"] = _normalize_str(app.get("log_level", "INFO"), "INFO").upper() or "INFO"
     app["debug_terminal_logs"] = _normalize_bool(app.get("debug_terminal_logs", False))
+    theme = _normalize_str(app.get("theme", "clover"), "clover").lower()
+    app["theme"] = theme if theme in {"clover", "sakura", "mint", "starlight"} else "clover"
     return merged
 
 
