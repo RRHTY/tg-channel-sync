@@ -15,6 +15,7 @@ sync_state = {
     "current_text": "",
     "current_link": "",
     "skipped": 0,
+    "unmapped": 0,
     "stop_requested": False,
     "source_id_raw": "",
     "target_id_raw": "",
@@ -58,6 +59,7 @@ def start_sync_session(
             "sender": sender,
             "current": 0,
             "skipped": 0,
+            "unmapped": 0,
             "total": 0,
             "stop_requested": False,
             "force_send": force_send,
@@ -87,6 +89,11 @@ async def update_state_and_check_skip(source_id, target_id, msg_id, text, force_
 
 async def record_success(source_id, target_id, msg_id, target_msg_id, force_send=False):
     await db.save_msg_mapping(source_id, msg_id, target_id, target_msg_id, overwrite=force_send)
+
+
+def count_unmapped_group() -> None:
+    """累计"已发送但拿不到新消息 ID"的媒体组，供任务结束汇总提示重复发送风险。"""
+    sync_state["unmapped"] = int(sync_state.get("unmapped", 0) or 0) + 1
 
 
 async def clear_temp_dir_files() -> None:

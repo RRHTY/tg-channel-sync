@@ -412,6 +412,73 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         mock_record_success.assert_not_awaited()
 
+    async def test_sync_media_group_api_generic_type_error_keeps_group_failed(self):
+        group = [type("Msg", (), {"id": 1, "text": None, "caption": None})()]
+        original_stop = history.sync_state["stop_requested"]
+        history.sync_state["stop_requested"] = False
+
+        with patch("sync_worker.clone.process.update_state_and_check_skip", AsyncMock(return_value=False)), \
+             patch("sync_worker.clone.process.resolve_reply_target", AsyncMock(return_value=None)), \
+             patch("sync_worker.clone.process.build_link_rewrite_context", AsyncMock(return_value={})), \
+             patch("sync_worker.clone.process.rewrite_media_group_captions", AsyncMock(return_value=([""], False, 0))), \
+             patch("sync_worker.clone.process.get_msg_meta", return_value=("photo", "sync_photo")), \
+             patch("sync_worker.clone.process.has_media_spoiler", return_value=False), \
+             patch("sync_worker.clone.process.execute_with_network_retry", AsyncMock(side_effect=TypeError("unexpected keyword argument 'captions'"))), \
+             patch("sync_worker.clone.process.record_success", AsyncMock()) as mock_record_success, \
+             patch("sync_worker.clone.process.log_sync_error", AsyncMock()) as mock_log_error:
+            result = await history.sync_media_group(
+                "api",
+                "bot",
+                object(),
+                object(),
+                -100123,
+                -100456,
+                group,
+                0,
+                False,
+            )
+
+        history.sync_state["stop_requested"] = original_stop
+        self.assertEqual(result, history.SYNC_RESULT_FAILED)
+        mock_record_success.assert_not_awaited()
+        mock_log_error.assert_awaited_once()
+
+    def test_pyrofork_topics_compat_defaults_topics_and_is_idempotent(self):
+        from pyrogram import raw
+
+        messages_cls = raw.types.messages.Messages
+        if not bot_engine._pyrofork_messages_topics_required(messages_cls):
+            self.assertFalse(getattr(messages_cls, bot_engine.PYRO_TOPICS_COMPAT_FLAG, False))
+            return
+        self.assertEqual(bot_engine._patch_pyrofork_messages_topics_default(), 0)
+        self.assertTrue(getattr(messages_cls, bot_engine.PYRO_TOPICS_COMPAT_FLAG, False))
+        self.assertEqual(list(messages_cls(messages=[], chats=[], users=[]).topics), [])
+
+    def test_count_unmapped_group_accumulates_until_session_reset(self):
+        original = history.sync_state.get("unmapped", 0)
+        history.sync_state["unmapped"] = 0
+        history.count_unmapped_group()
+        history.count_unmapped_group()
+        self.assertEqual(history.sync_state["unmapped"], 2)
+        history.sync_state["unmapped"] = original
+
+    def test_pyrofork_topics_compat_detects_required_topics_argument(self):
+        class LegacyMessages:
+            def __init__(self, *, messages, chats, users):
+                self.messages = messages
+                self.chats = chats
+                self.users = users
+
+        class ModernMessages:
+            def __init__(self, *, messages, topics, chats, users):
+                self.messages = messages
+                self.topics = topics
+                self.chats = chats
+                self.users = users
+
+        self.assertFalse(bot_engine._pyrofork_messages_topics_required(LegacyMessages))
+        self.assertTrue(bot_engine._pyrofork_messages_topics_required(ModernMessages))
+
     async def test_download_clone_media_item_uses_normal_download(self):
         fake_app = type("FakeApp", (), {"download_media": AsyncMock(return_value="normal.bin")})()
         msg = type("Msg", (), {"id": 9, "document": type("Doc", (), {"file_id": "x", "file_size": 10})()})()

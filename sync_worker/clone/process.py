@@ -44,6 +44,7 @@ from ..media import describe_hash_perturb_reason, prepare_media_for_send
 from ..runtime import (
     TEMP_DIR,
     clear_temp_dir_files,
+    count_unmapped_group,
     finish_sync_session,
     record_success,
     start_sync_session,
@@ -655,6 +656,7 @@ async def sync_media_group(
     result = SYNC_RESULT_FAILED
 
     if mode == "api":
+        last_error = None
         for _ in range(3):
             if sync_state["stop_requested"]:
                 break
@@ -670,14 +672,19 @@ async def sync_media_group(
                     reply_to_id,
                     quote_data,
                 )
-                copied_msgs = await execute_with_network_retry(
+                copied_msgs = list(await execute_with_network_retry(
                     lambda: app.copy_media_group(**kwargs),
                     action_label=f"API 媒体组复制 {group[0].id}",
                     sync_state=sync_state,
                     log_tag="SYNC_NETWORK_RETRY",
-                )
+                ) or [])
                 for orig_m, new_m in zip(group, copied_msgs):
                     await record_success(source_id, target_id, orig_m.id, new_m.id, force_send=force_send)
+                if len(copied_msgs) != len(group):
+                    await db.add_msg_log(
+                        "API_GROUP_PARTIAL",
+                        f"原始:[{source_id}] 组首ID:{group[0].id} | 源组 {len(group)} 项，回包 {len(copied_msgs)} 项 | 回包缺失的项未记录映射",
+                    )
                 if captions_changed:
                     await db.add_msg_log("API_GROUP_CAPTION_REWRITE", f"原始:[{source_id}] 组首ID:{group[0].id} | 命中 {caption_rewrite_count} 个 caption 链接改写")
                 if quote_data and reply_to_id:
@@ -685,13 +692,17 @@ async def sync_media_group(
                 result = SYNC_RESULT_SENT_MAPPED
                 break
             except TypeError as exc:
-                if "topics" in str(exc):
+                # 只有确认是 Pyrofork 回包 topics 解析异常才认定"已发送"，
+                # 其余 TypeError（如参数构造错误）必须继续按失败处理，避免整组被静默丢弃。
+                if _is_topics_parse_error(exc):
                     await db.add_msg_log(
                         "API_TOPICS_COMPAT",
                         f"原始:[{source_id}] 组首ID:{group[0].id} | 回包 topics 解析异常，可能已发送但未记录映射",
                     )
+                    count_unmapped_group()
                     result = SYNC_RESULT_SENT_UNMAPPED
                     break
+                last_error = exc
             except Exception as exc:
                 if "STOP_REQUESTED" in str(exc):
                     raise
@@ -699,6 +710,10 @@ async def sync_media_group(
                     raise
                 if _is_chat_forwards_restricted(exc):
                     raise RuntimeError("该频道不支持转发，请使用下载重传") from exc
+                last_error = exc
+                await asyncio.sleep(2)
+        if result == SYNC_RESULT_FAILED and last_error is not None and not sync_state["stop_requested"]:
+            await log_sync_error(f"API 媒体组复制失败 组首ID {group[0].id}", last_error)
     else:
         downloaded_files = []
         dl_success = False
@@ -872,6 +887,7 @@ async def sync_media_group(
                         "CLONE_GROUP_SEND",
                         f"原始:[{source_id}] 组首ID:{group[0].id} | 目标:[{target_id}] 共 {len(group)} 项 | 可能已发送，回包解析失败，未记录映射",
                     )
+                    count_unmapped_group()
                     result = SYNC_RESULT_SENT_UNMAPPED
                     break
                 if actual_sender == "bot" and _is_request_entity_too_large(exc):
@@ -961,6 +977,7 @@ async def sync_media_group(
                         f"原始:[{source_id}] 组首ID:{first_id} | 目标:[{target_id}] 共 {len(group)} 项 | 可能已发送，回包解析失败，未记录映射",
                     )
                     sent_group_success = True
+                    count_unmapped_group()
                     result = SYNC_RESULT_SENT_UNMAPPED
                 else:
                     raise
@@ -1155,8 +1172,13 @@ async def process_master_sync(
         elif sync_state.get("stop_requested") or final_status == "stopped":
             await db.add_log("INFO", f"任务结束：{sync_state.get('mode', mode.upper())} 已停止")
         else:
-            await db.add_log(
-                "INFO",
-                f"任务运行完毕：{sync_state.get('mode', mode.upper())} | 已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | 跳过 {sync_state.get('skipped', 0)}",
+            summary = (
+                f"任务运行完毕：{sync_state.get('mode', mode.upper())} | "
+                f"已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | "
+                f"跳过 {sync_state.get('skipped', 0)}"
             )
+            unmapped_count = int(sync_state.get("unmapped", 0) or 0)
+            if unmapped_count:
+                summary += f" | 已发送但未记录映射 {unmapped_count} 组（重跑会重复发送，建议先核对目标频道）"
+            await db.add_log("INFO", summary)
         finish_sync_session()

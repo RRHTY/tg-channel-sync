@@ -38,7 +38,7 @@ from ..core import (
     resolve_json_media,
 )
 from ..media import prepare_json_media_for_send
-from ..runtime import TEMP_DIR, record_success, sync_state, update_state_and_check_skip
+from ..runtime import TEMP_DIR, count_unmapped_group, record_success, sync_state, update_state_and_check_skip
 from ..senders import build_bot_media_group, build_user_media_group
 from .grouping import _json_group_family, group_json_messages
 from .helpers import (
@@ -582,6 +582,7 @@ async def send_json_media_group(
                 "JSON_GROUP_SEND_UNMAPPED",
                 f"组首消息ID:{first_id} | 共 {len(group)} 条 | 目标:[{target_id}] | 可能已发送，回包解析失败，未记录映射",
             )
+            count_unmapped_group()
             return JSON_GROUP_SENT_UNMAPPED
         for original_msg, sent_msg in zip(group, sent_group):
             new_id = _get_sent_message_id(sent_msg)

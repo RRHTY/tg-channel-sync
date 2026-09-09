@@ -1,4 +1,5 @@
 ﻿import asyncio
+import inspect
 import logging
 import os
 import re
@@ -50,24 +51,50 @@ from sync_worker.senders import (
 )
 
 
-def _patch_pyrofork_messages_topics_default() -> None:
+PYRO_TOPICS_COMPAT_TYPES = ("Messages", "MessagesSlice", "ChannelMessages")
+PYRO_TOPICS_COMPAT_FLAG = "_tg_sync_topics_compat"
+
+
+def _pyrofork_messages_topics_required(cls) -> bool:
+    """判断该 TL 类型的原生构造是否把 topics 作为必填参数（TL layer 220+）。
+
+    已打过补丁的类型同样返回 True：补丁只在原生构造确实要求 topics 时才会应用，
+    而补丁会给 topics 补默认值，因此不能只看当前签名，否则会对已补丁类型误判。
+    """
+    if getattr(cls, PYRO_TOPICS_COMPAT_FLAG, False):
+        return True
+    try:
+        parameter = inspect.signature(cls.__init__).parameters.get("topics")
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.default is inspect.Parameter.empty
+
+
+def _patch_pyrofork_messages_topics_default() -> int:
     """Pyrofork TL layer 220 起 raw.types.messages.Messages 构造函数要求 topics 参数，
     但其内部 copy_media_group / send_media_group / send_paid_media 发送成功后手动构造
     该类型时漏传 topics，导致回包解析抛 TypeError（消息实际已发送、映射无法落库）。
-    这里给 topics 补默认值，兼容旧版库的全部手动构造点；read() 反序列化路径显式传值不受影响。"""
-    messages_cls = raw.types.messages.Messages
-    original_init = messages_cls.__init__
+    这里给 topics 补默认值；read() 反序列化路径显式传值不受影响。
 
-    def _init_with_topics_default(self, *, messages, chats, users, topics=None):
-        original_init(
-            self,
-            messages=messages,
-            chats=chats,
-            users=users,
-            topics=topics if topics is not None else [],
-        )
+    仅当构造函数确实把 topics 设为必填时才打补丁，避免在旧版 Pyrofork（无该参数）上
+    反向把 topics 传进去而破坏 get_messages / get_chat_history 等反序列化路径。
+    返回实际打补丁的类型数量（可重复调用）。"""
+    patched = 0
+    for type_name in PYRO_TOPICS_COMPAT_TYPES:
+        cls = getattr(raw.types.messages, type_name, None)
+        if cls is None or getattr(cls, PYRO_TOPICS_COMPAT_FLAG, False):
+            continue
+        if not _pyrofork_messages_topics_required(cls):
+            continue
+        original_init = cls.__init__
 
-    messages_cls.__init__ = _init_with_topics_default
+        def _init_with_topics_default(self, *args, topics=None, _original_init=original_init, **kwargs):
+            _original_init(self, *args, topics=topics if topics is not None else [], **kwargs)
+
+        cls.__init__ = _init_with_topics_default
+        setattr(cls, PYRO_TOPICS_COMPAT_FLAG, True)
+        patched += 1
+    return patched
 
 
 _patch_pyrofork_messages_topics_default()
