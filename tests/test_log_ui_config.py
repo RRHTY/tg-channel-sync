@@ -134,6 +134,13 @@ class LogUiConfigTests(unittest.TestCase):
         stylesheet = content.index('rel="stylesheet"')
         self.assertLess(restore_script, stylesheet)
 
+    def test_adding_filter_rule_preserves_selection_fields(self):
+        content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
+
+        self.assertIn('rule_type: rule.rule_type', content)
+        self.assertIn('is_case_sensitive: rule.is_case_sensitive', content)
+        self.assertNotIn('this.newFilter = { rule_type: "replace"', content)
+
     def test_view_navigation_returns_to_page_top(self):
         content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
 

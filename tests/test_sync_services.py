@@ -482,6 +482,41 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         mock_record_success.assert_awaited_once_with(-100123, -100456, 1, 101, force_send=False)
         mock_count_unmapped.assert_called_once_with()
 
+    async def test_sync_media_group_drop_filter_blocks_whole_group(self):
+        blocked_text = (
+            "豆包提示词 视频教学 手机电脑均可使用 一张照片即可做出想要ai视频 "
+            "进群学习提示词p图自助下单哦 @doubao40bot 预览群 https://t.me/+8F1U-0uMIys5ZmM1"
+        )
+        caption = type("Caption", (), {"html": blocked_text})()
+        group = [
+            type("Msg", (), {"id": 1, "text": None, "caption": None})(),
+            type("Msg", (), {"id": 2, "text": None, "caption": caption})(),
+        ]
+
+        with patch("sync_worker.clone.process.update_state_and_check_skip", AsyncMock(return_value=False)), \
+             patch("sync_worker.clone.process.db.apply_message_filters", AsyncMock(side_effect=[(False, ""), (True, blocked_text)])) as mock_filter, \
+             patch("sync_worker.clone.process.resolve_reply_target", AsyncMock(return_value=None)), \
+             patch("sync_worker.clone.process.rewrite_media_group_captions", AsyncMock(return_value=(["", blocked_text], False, 0))), \
+             patch("sync_worker.clone.process.get_msg_meta", return_value=("photo", "sync_photo")), \
+             patch("sync_worker.clone.process.has_media_spoiler", return_value=False), \
+             patch("sync_worker.clone.process.execute_with_network_retry", AsyncMock()) as mock_send, \
+             patch("sync_worker.clone.process.db.add_msg_log", AsyncMock()):
+            result = await history.sync_media_group(
+                "api",
+                "user",
+                object(),
+                object(),
+                -100123,
+                -100456,
+                group,
+                0,
+                False,
+            )
+
+        self.assertEqual(result, history.SYNC_RESULT_SKIPPED)
+        self.assertEqual(mock_filter.await_count, 2)
+        mock_send.assert_not_awaited()
+
     def test_pyrofork_topics_compat_defaults_topics_and_is_idempotent(self):
         from pyrogram import raw
 

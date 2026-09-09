@@ -61,6 +61,7 @@ JSON_STANDARD_USER_UPLOAD_MAX_BYTES = 2000 * 1024 * 1024
 HTML_TOKEN_RE = re.compile(r"<[^>]+>|[^<]+")
 HTML_TAG_NAME_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9-]*)")
 JSON_GROUP_SENT_UNMAPPED = "sent_unmapped"
+JSON_GROUP_SKIPPED = "skipped"
 
 
 def _pyro_file_ref(media_path: str) -> str:
@@ -472,7 +473,21 @@ async def send_json_media_group(
     first_msg = group[0]
     first_id = group_ids[0] if group_ids else 0
     if await update_state_and_check_skip(source_scope_id, target_id, first_id, "[JSON媒体组]", force_send=force_send):
-        return
+        return JSON_GROUP_SKIPPED
+
+    for item in group:
+        item_id = int(item.get("id") or 0)
+        msg_type, _ = get_msg_meta(item, "json")
+        text = build_json_text(item, include_external_source_header=False)
+        media_path, _, _ = resolve_json_media(item, json_dir)
+        file_name = os.path.basename(str(media_path or ""))
+        should_skip, _ = await db.apply_message_filters(text, msg_type != "text", file_name)
+        if should_skip:
+            await db.add_msg_log(
+                "JSON_DROP_REGEX",
+                f"媒体组消息ID:{group_ids} | 命中消息ID:{item_id} | 已被正则过滤拦截",
+            )
+            return JSON_GROUP_SKIPPED
 
     sent_ids = []
     prepared_temp_paths = []

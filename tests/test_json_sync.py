@@ -670,6 +670,35 @@ class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
 
                 await json_sync.process_json_sync("bot", "@target", str(json_path), 0.5, False)
 
+    async def test_json_media_group_drop_filter_blocks_whole_group(self):
+        blocked_text = (
+            "豆包提示词 视频教学 手机电脑均可使用 一张照片即可做出想要ai视频 "
+            "进群学习提示词p图自助下单哦 @doubao40bot 预览群 https://t.me/+8F1U-0uMIys5ZmM1"
+        )
+        group = [
+            {"id": 1, "type": "message", "photo": "one.jpg", "text": ""},
+            {"id": 2, "type": "message", "photo": "two.jpg", "text": blocked_text},
+        ]
+
+        with patch("sync_worker.json_import.process.update_state_and_check_skip", AsyncMock(return_value=False)), \
+             patch("sync_worker.json_import.process.db.apply_message_filters", AsyncMock(side_effect=[(False, ""), (True, blocked_text)])) as mock_filter, \
+             patch("sync_worker.json_import.process._prepare_json_media_group", AsyncMock(return_value=None)) as mock_prepare, \
+             patch("sync_worker.json_import.process.db.add_msg_log", AsyncMock()):
+            result = await json_sync.send_json_media_group(
+                group,
+                -100456,
+                "unused",
+                -100123,
+                False,
+                {},
+                "bot",
+                True,
+            )
+
+        self.assertEqual(result, "skipped")
+        self.assertEqual(mock_filter.await_count, 2)
+        mock_prepare.assert_not_awaited()
+
     async def test_process_json_sync_keeps_single_photo_spoiler(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             photos_dir = Path(temp_dir) / "photos"

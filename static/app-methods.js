@@ -311,7 +311,12 @@
         const res = api.ensureSuccess(await api.postForm("/api/filter_rules", form), "添加过滤规则失败");
         if (res.message) this.showToast(res.message);
         await this.loadFilters();
-        this.newFilter = { rule_type: "replace", pattern: "", replacement: "", is_case_sensitive: 0 };
+        this.newFilter = {
+          rule_type: rule.rule_type,
+          pattern: "",
+          replacement: "",
+          is_case_sensitive: rule.is_case_sensitive,
+        };
       } catch (error) {
         this.handleApiError(error, "添加过滤规则失败");
       }

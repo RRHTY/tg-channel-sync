@@ -108,6 +108,20 @@ def _download_actor_label(app) -> str:
     return bot_engine.describe_user_client(app, fallback="辅助账号")
 
 
+async def _media_group_should_drop(group, mode: str) -> bool:
+    """任一成员命中屏蔽规则时丢弃整个媒体组。"""
+    for item in group:
+        item_type, _ = get_msg_meta(item, mode)
+        caption = getattr(item, "caption", None)
+        text_html = str(getattr(caption, "html", caption) or "")
+        media = getattr(item, item_type, None)
+        file_name = str(getattr(media, "file_name", "") or "")
+        should_skip, _ = await db.apply_message_filters(text_html, True, file_name)
+        if should_skip:
+            return True
+    return False
+
+
 def _build_api_media_group_copy_kwargs(
     chat_id,
     source_id,
@@ -637,6 +651,12 @@ async def sync_media_group(
     if chat_id is None:
         chat_id = target_id
     if await update_state_and_check_skip(source_id, target_id, group[0].id, "[媒体组]", force_send=force_send):
+        return SYNC_RESULT_SKIPPED
+    if await _media_group_should_drop(group, mode):
+        await db.add_msg_log(
+            f"{mode.upper()}_DROP_REGEX",
+            f"原始:[{source_id}] 媒体组消息ID:{[item.id for item in group]} | 已被正则过滤拦截",
+        )
         return SYNC_RESULT_SKIPPED
 
     reply_to_id = await resolve_reply_target(source_id, target_id, get_reply_source_msg_id(group[0], mode), mode.upper(), group[0].id)
