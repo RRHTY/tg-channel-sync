@@ -683,13 +683,18 @@ async def sync_media_group(
                 if len(copied_msgs) != len(group):
                     await db.add_msg_log(
                         "API_GROUP_PARTIAL",
-                        f"原始:[{source_id}] 组首ID:{group[0].id} | 源组 {len(group)} 项，回包 {len(copied_msgs)} 项 | 回包缺失的项未记录映射",
+                        f"原始:[{source_id}] 组首ID:{group[0].id} | 源组 {len(group)} 项，回包 {len(copied_msgs)} 项 | 未能完整确认映射",
                     )
+                    count_unmapped_group()
                 if captions_changed:
                     await db.add_msg_log("API_GROUP_CAPTION_REWRITE", f"原始:[{source_id}] 组首ID:{group[0].id} | 命中 {caption_rewrite_count} 个 caption 链接改写")
                 if quote_data and reply_to_id:
                     await db.add_msg_log("API_QUOTE_GROUP_SEND", f"原始:[{source_id}] 组首ID:{group[0].id} | 已按引用回复发送媒体组")
-                result = SYNC_RESULT_SENT_MAPPED
+                result = (
+                    SYNC_RESULT_SENT_MAPPED
+                    if len(copied_msgs) == len(group)
+                    else SYNC_RESULT_SENT_UNMAPPED
+                )
                 break
             except TypeError as exc:
                 # 只有确认是 Pyrofork 回包 topics 解析异常才认定"已发送"，
@@ -1164,21 +1169,22 @@ async def process_master_sync(
         final_status = "failed"
         await log_sync_error("同步中断", exc)
     finally:
+        unmapped_count = int(sync_state.get("unmapped", 0) or 0)
+        unmapped_summary = ""
+        if unmapped_count:
+            unmapped_summary = f" | 已发送但未记录映射 {unmapped_count} 组（重跑会重复发送，建议先核对目标频道）"
         if final_status == "failed":
             await db.add_log(
                 "ERROR",
-                f"任务异常终止：{sync_state.get('mode', mode.upper())} | 已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | 跳过 {sync_state.get('skipped', 0)}",
+                f"任务异常终止：{sync_state.get('mode', mode.upper())} | 已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | 跳过 {sync_state.get('skipped', 0)}{unmapped_summary}",
             )
         elif sync_state.get("stop_requested") or final_status == "stopped":
-            await db.add_log("INFO", f"任务结束：{sync_state.get('mode', mode.upper())} 已停止")
+            await db.add_log("INFO", f"任务结束：{sync_state.get('mode', mode.upper())} 已停止{unmapped_summary}")
         else:
             summary = (
                 f"任务运行完毕：{sync_state.get('mode', mode.upper())} | "
                 f"已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | "
-                f"跳过 {sync_state.get('skipped', 0)}"
+                f"跳过 {sync_state.get('skipped', 0)}{unmapped_summary}"
             )
-            unmapped_count = int(sync_state.get("unmapped", 0) or 0)
-            if unmapped_count:
-                summary += f" | 已发送但未记录映射 {unmapped_count} 组（重跑会重复发送，建议先核对目标频道）"
             await db.add_log("INFO", summary)
         finish_sync_session()

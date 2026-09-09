@@ -1,3 +1,4 @@
+import inspect
 import unittest
 import tempfile
 from pathlib import Path
@@ -284,9 +285,16 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(history._is_chat_forwards_restricted(Exception("other error")))
 
     def test_pyrofork_messages_compat_defaults_topics(self):
-        messages = bot_engine.raw.types.messages.Messages(messages=[], chats=[], users=[])
+        messages_cls = bot_engine.raw.types.messages.Messages
+        topics_parameter = inspect.signature(messages_cls.__init__).parameters.get("topics")
+        messages = messages_cls(messages=[], chats=[], users=[])
 
-        self.assertEqual(messages.topics, [])
+        if bot_engine._pyrofork_messages_topics_required(messages_cls):
+            self.assertEqual(messages.topics, [])
+        elif topics_parameter is None:
+            self.assertFalse(hasattr(messages, "topics"))
+        else:
+            self.assertEqual(messages.topics, topics_parameter.default)
 
     def test_build_temp_download_path_uses_message_id_prefix(self):
         media = type("Media", (), {"file_name": "PixPin_2026-04-17_19-36-44.mp4"})()
@@ -443,6 +451,37 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         mock_record_success.assert_not_awaited()
         mock_log_error.assert_awaited_once()
 
+    async def test_sync_media_group_api_partial_response_is_reported_unmapped(self):
+        group = [
+            type("Msg", (), {"id": 1, "text": None, "caption": None})(),
+            type("Msg", (), {"id": 2, "text": None, "caption": None})(),
+        ]
+        sent = [type("Sent", (), {"id": 101})()]
+
+        with patch("sync_worker.clone.process.update_state_and_check_skip", AsyncMock(return_value=False)), \
+             patch("sync_worker.clone.process.resolve_reply_target", AsyncMock(return_value=None)), \
+             patch("sync_worker.clone.process.rewrite_media_group_captions", AsyncMock(return_value=(["", ""], False, 0))), \
+             patch("sync_worker.clone.process.get_msg_meta", return_value=("photo", "sync_photo")), \
+             patch("sync_worker.clone.process.has_media_spoiler", return_value=False), \
+             patch("sync_worker.clone.process.execute_with_network_retry", AsyncMock(return_value=sent)), \
+             patch("sync_worker.clone.process.record_success", AsyncMock()) as mock_record_success, \
+             patch("sync_worker.clone.process.count_unmapped_group") as mock_count_unmapped:
+            result = await history.sync_media_group(
+                "api",
+                "bot",
+                object(),
+                object(),
+                -100123,
+                -100456,
+                group,
+                0,
+                False,
+            )
+
+        self.assertEqual(result, history.SYNC_RESULT_SENT_UNMAPPED)
+        mock_record_success.assert_awaited_once_with(-100123, -100456, 1, 101, force_send=False)
+        mock_count_unmapped.assert_called_once_with()
+
     def test_pyrofork_topics_compat_defaults_topics_and_is_idempotent(self):
         from pyrogram import raw
 
@@ -501,6 +540,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             history.sync_state["current"] = 36
             history.sync_state["total"] = 33
             history.sync_state["skipped"] = 36
+            history.sync_state["unmapped"] = 2
             raise sync_services.SyncNetworkRetryExhaustedError("JSON 文本发送 1 连续重试 2 次后仍无法连接")
 
         with patch("sync_worker.clone.process.db.get_all_settings", AsyncMock(return_value={})), \
@@ -514,7 +554,26 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             await history.process_master_sync("json", "bot", "", "@target", 1, 0, 0, "fake.json", False, "", 3)
 
         mock_log_sync_error.assert_awaited()
-        mock_add_log.assert_any_await("ERROR", "任务异常终止：JSON | 已处理 36 / 33 | 跳过 36")
+        mock_add_log.assert_any_await(
+            "ERROR",
+            "任务异常终止：JSON | 已处理 36 / 33 | 跳过 36 | 已发送但未记录映射 2 组（重跑会重复发送，建议先核对目标频道）",
+        )
+
+    async def test_process_master_sync_logs_unmapped_summary_when_stopped(self):
+        async def _stop_with_unmapped(*args, **kwargs):
+            history.sync_state["unmapped"] = 1
+            history.sync_state["stop_requested"] = True
+
+        with patch("sync_worker.clone.process.db.get_all_settings", AsyncMock(return_value={})), \
+             patch("sync_worker.clone.process.resolve_chat_id", AsyncMock(return_value=-100456)), \
+             patch("sync_worker.clone.process.process_json_sync", AsyncMock(side_effect=_stop_with_unmapped)), \
+             patch("sync_worker.clone.process.db.add_log", AsyncMock()) as mock_add_log:
+            await history.process_master_sync("json", "bot", "", "@target", 1, 0, 0, "fake.json", False, "", 3)
+
+        mock_add_log.assert_any_await(
+            "INFO",
+            "任务结束：JSON 已停止 | 已发送但未记录映射 1 组（重跑会重复发送，建议先核对目标频道）",
+        )
 
     def test_bot_media_group_can_attach_thumbnail(self):
         thumbnail = history.FSInputFile(__file__)
