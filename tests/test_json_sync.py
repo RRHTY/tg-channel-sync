@@ -13,6 +13,14 @@ class FakeSentMessage:
 
 
 class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.filter_patcher = patch(
+            "sync_worker.json_import.process.db.apply_message_filters",
+            AsyncMock(side_effect=lambda text, *_: (False, text)),
+        )
+        self.filter_patcher.start()
+        self.addCleanup(self.filter_patcher.stop)
+
     def test_parse_retry_after_seconds(self):
         self.assertEqual(json_sync._parse_retry_after_seconds(Exception("retry after 21")), 21)
         self.assertEqual(json_sync._parse_retry_after_seconds(Exception("A wait of 123 seconds is required.")), 123)
