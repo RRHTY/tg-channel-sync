@@ -30,6 +30,7 @@ config.json
 /build/
 /dist/
 /dist-portable/
+/dist-release/
 
 # Editor settings
 .idea/

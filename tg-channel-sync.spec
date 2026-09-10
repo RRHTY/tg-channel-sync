@@ -1,9 +1,11 @@
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
-project_root = Path.cwd()
+project_root = Path(SPECPATH).resolve()
+binary_name = os.environ.get("TG_SYNC_BINARY_NAME", "tg-channel-sync").strip() or "tg-channel-sync"
 
 hiddenimports = []
 for package_name in [
@@ -25,7 +27,7 @@ datas += collect_data_files("aiogram")
 
 
 a = Analysis(
-    ["main.py"],
+    [str(project_root / "main.py")],
     pathex=[str(project_root)],
     binaries=[],
     datas=datas,
@@ -41,21 +43,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name="tg-channel-sync",
+    name=binary_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     console=True,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name="tg-channel-sync",
 )
