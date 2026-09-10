@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -78,7 +79,29 @@ def validate_release_archive(archive: Path, basename: str, executable_name: str)
         return {"binary_size": binary_info.file_size, "archive_entries": len(actual)}
 
 
-def run_archive_smoke(archive: Path, build_root: Path, basename: str, executable_name: str) -> str:
+def parse_bundle_smoke_output(output: str, expected_version: str) -> dict[str, object]:
+    marker = "BUNDLE_SMOKE_OK "
+    report_line = next((line for line in output.splitlines() if line.startswith(marker)), "")
+    if not report_line:
+        raise RuntimeError(f"bundle smoke did not report success: {output!r}")
+    try:
+        report = json.loads(report_line[len(marker) :])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"bundle smoke returned invalid JSON: {report_line!r}") from exc
+    if report.get("version") != expected_version:
+        raise RuntimeError(
+            f"bundle smoke reported version {report.get('version')!r}; expected {expected_version!r}"
+        )
+    return report
+
+
+def run_archive_smoke(
+    archive: Path,
+    build_root: Path,
+    basename: str,
+    executable_name: str,
+    expected_version: str,
+) -> str:
     smoke_root = build_root / "smoke"
     with zipfile.ZipFile(archive) as package:
         package.extractall(smoke_root)
@@ -95,8 +118,7 @@ def run_archive_smoke(archive: Path, build_root: Path, basename: str, executable
         timeout=120,
     )
     output = completed.stdout.strip()
-    if "BUNDLE_SMOKE_OK" not in output:
-        raise RuntimeError(f"bundle smoke did not report success: {output!r}")
+    parse_bundle_smoke_output(output, expected_version)
 
     runtime_root = executable.parent
     required = (
@@ -154,7 +176,7 @@ def build_release(project_root: Path, output_dir: Path) -> tuple[Path, Path]:
         built_binary = pyinstaller_dist / executable_name
         create_release_archive(built_binary, archive, basename)
         result = validate_release_archive(archive, basename, executable_name)
-        smoke_output = run_archive_smoke(archive, build_root, basename, executable_name)
+        smoke_output = run_archive_smoke(archive, build_root, basename, executable_name, version)
         digest = sha256_file(archive)
         output_dir.mkdir(parents=True, exist_ok=True)
         checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")

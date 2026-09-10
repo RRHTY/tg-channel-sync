@@ -16,7 +16,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("needs: build", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("gh release create", workflow)
+        self.assertIn('release_assets="$(gh release view', workflow)
+        self.assertIn('done <<< "$release_assets"', workflow)
+        self.assertNotIn("for asset in $(gh release view", workflow)
+        self.assertNotIn("gh release edit \"$RELEASE_TAG\" --title \"$RELEASE_TAG\" --notes-file \"$notes\" --latest", workflow)
+        self.assertNotIn("dist-release/*.zip", workflow)
         self.assertNotIn("pull_request_target", workflow)
+
+        dockerignore = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
+        self.assertIn("dist-release/", dockerignore)
 
     def test_v052_docs_describe_native_downloads_without_legacy_packages(self):
         version = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -26,6 +34,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(version, "v0.5.2")
         self.assertIn("tg-channel-sync-v0.5.2-windows-x64.zip", readme)
         self.assertIn("tg-channel-sync-v0.5.2-linux-x64.zip", readme)
+        self.assertIn("cd tg-channel-sync-v0.5.2-linux-x64", readme)
         self.assertIn("Docker Compose", readme)
         self.assertNotIn("windows-x64-portable.zip", readme)
         self.assertNotIn("windows-x64-full.zip", readme)

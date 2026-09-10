@@ -18,6 +18,20 @@ def prepare_release_assets(assets_dir: Path, tag: str, local_version: str) -> Pa
     if normalized_tag != normalized_version:
         raise RuntimeError(f"release tag {normalized_tag!r} does not match VERSION {normalized_version!r}")
 
+    expected_archives = {
+        f"{artifact_basename(normalized_version, platform_tag)}.zip" for platform_tag, _ in PLATFORMS
+    }
+    expected_sidecars = {
+        f"{artifact_basename(normalized_version, platform_tag)}.sha256" for platform_tag, _ in PLATFORMS
+    }
+    actual_archives = {path.name for path in assets_dir.glob("*.zip")}
+    actual_sidecars = {path.name for path in assets_dir.glob("*.sha256")}
+    if actual_archives != expected_archives or actual_sidecars != expected_sidecars:
+        raise RuntimeError(
+            "unexpected release assets: "
+            f"archives={sorted(actual_archives)!r}, checksums={sorted(actual_sidecars)!r}"
+        )
+
     checksum_lines: list[str] = []
     for platform_tag, executable_suffix in PLATFORMS:
         basename = artifact_basename(normalized_version, platform_tag)

@@ -12,5 +12,6 @@ venv/
 data/
 temp/
 dist-portable/
+dist-release/
 build/
 *.spec

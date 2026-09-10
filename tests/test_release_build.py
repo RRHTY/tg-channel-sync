@@ -7,6 +7,7 @@ from scripts.build_release import (
     artifact_basename,
     create_release_archive,
     detect_platform_tag,
+    parse_bundle_smoke_output,
     validate_release_archive,
 )
 from scripts.prepare_release import prepare_release_assets
@@ -31,6 +32,16 @@ class ReleaseBuildTests(unittest.TestCase):
             artifact_basename("v0.5.2", "windows-x64"),
             "tg-channel-sync-v0.5.2-windows-x64",
         )
+
+    def test_bundle_smoke_output_must_report_expected_version(self):
+        valid = 'BUNDLE_SMOKE_OK {"version": "v0.5.2", "static_index": true}'
+        self.assertEqual(parse_bundle_smoke_output(valid, "v0.5.2")["version"], "v0.5.2")
+
+        with self.assertRaisesRegex(RuntimeError, "reported version"):
+            parse_bundle_smoke_output(
+                'BUNDLE_SMOKE_OK {"version": "unknown", "static_index": true}',
+                "v0.5.2",
+            )
 
     def test_archive_contains_only_named_directory_and_binary(self):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "temp") as temp_dir:
@@ -96,6 +107,14 @@ class ReleaseBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "temp") as temp_dir:
             with self.assertRaisesRegex(RuntimeError, "does not match VERSION"):
                 prepare_release_assets(Path(temp_dir), "v0.5.2", "v0.5.1")
+
+    def test_prepare_release_rejects_unexpected_archives(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "temp") as temp_dir:
+            root = Path(temp_dir)
+            (root / "unexpected.zip").write_bytes(b"extra")
+
+            with self.assertRaisesRegex(RuntimeError, "unexpected release assets"):
+                prepare_release_assets(root, "v0.5.2", "v0.5.2")
 
 
 if __name__ == "__main__":

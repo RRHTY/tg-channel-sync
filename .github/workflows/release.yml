@@ -102,11 +102,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes="docs/releases/${RELEASE_TAG}.md"
+          windows="dist-release/tg-channel-sync-${RELEASE_TAG}-windows-x64.zip"
+          linux="dist-release/tg-channel-sync-${RELEASE_TAG}-linux-x64.zip"
+          sums="dist-release/SHA256SUMS.txt"
           test -f "$notes"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes" --latest
-            gh release upload "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS.txt --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes"
+            release_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+            while IFS= read -r asset; do
+              test -n "$asset" || continue
+              case "$asset" in
+                "$(basename "$windows")"|"$(basename "$linux")"|"$(basename "$sums")") ;;
+                *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes ;;
+              esac
+            done <<< "$release_assets"
+            gh release upload "$RELEASE_TAG" "$windows" "$linux" "$sums" --clobber
           else
-            gh release create "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS.txt \
+            gh release create "$RELEASE_TAG" "$windows" "$linux" "$sums" \
               --verify-tag --title "$RELEASE_TAG" --notes-file "$notes" --latest
           fi

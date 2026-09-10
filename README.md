@@ -54,6 +54,7 @@
 下载 `tg-channel-sync-v0.5.2-linux-x64.zip` 并解压后运行：
 
 ```bash
+cd tg-channel-sync-v0.5.2-linux-x64
 chmod +x tg-channel-sync-v0.5.2-linux-x64
 ./tg-channel-sync-v0.5.2-linux-x64
 ```
