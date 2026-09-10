@@ -15,8 +15,10 @@ for package_name in [
     "aiosqlite",
     "aiohttp",
     "python_socks",
+    "sync_worker",
 ]:
     hiddenimports.extend(collect_submodules(package_name))
+hiddenimports.append("bot_engine")
 
 datas = [
     (str(project_root / "static"), "static"),

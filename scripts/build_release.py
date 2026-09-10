@@ -78,6 +78,40 @@ def validate_release_archive(archive: Path, basename: str, executable_name: str)
         return {"binary_size": binary_info.file_size, "archive_entries": len(actual)}
 
 
+def run_archive_smoke(archive: Path, build_root: Path, basename: str, executable_name: str) -> str:
+    smoke_root = build_root / "smoke"
+    with zipfile.ZipFile(archive) as package:
+        package.extractall(smoke_root)
+        binary_info = package.getinfo(f"{basename}/{executable_name}")
+
+    executable = smoke_root / basename / executable_name
+    executable.chmod((binary_info.external_attr >> 16) & 0o777)
+    completed = subprocess.run(
+        [str(executable), "--bundle-smoke"],
+        cwd=executable.parent,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    output = completed.stdout.strip()
+    if "BUNDLE_SMOKE_OK" not in output:
+        raise RuntimeError(f"bundle smoke did not report success: {output!r}")
+
+    runtime_root = executable.parent
+    required = (
+        runtime_root / "config.json",
+        runtime_root / "data",
+        runtime_root / "temp",
+        runtime_root / "data" / "logs",
+        runtime_root / "data" / "sessions",
+    )
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise RuntimeError(f"bundle smoke did not create runtime files: {missing}")
+    return output
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -120,6 +154,7 @@ def build_release(project_root: Path, output_dir: Path) -> tuple[Path, Path]:
         built_binary = pyinstaller_dist / executable_name
         create_release_archive(built_binary, archive, basename)
         result = validate_release_archive(archive, basename, executable_name)
+        smoke_output = run_archive_smoke(archive, build_root, basename, executable_name)
         digest = sha256_file(archive)
         output_dir.mkdir(parents=True, exist_ok=True)
         checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
@@ -131,6 +166,7 @@ def build_release(project_root: Path, output_dir: Path) -> tuple[Path, Path]:
     print(f"Checksum: {checksum}")
     print(f"SHA-256: {digest}")
     print(f"Binary size: {result['binary_size']}")
+    print(smoke_output)
     return archive, checksum
 
 

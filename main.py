@@ -853,6 +853,12 @@ def run_server():
     SERVER = None
 
 if __name__ == "__main__":
+    if "--bundle-smoke" in sys.argv:
+        from services.bundle_smoke import run_bundle_smoke
+
+        print(f"BUNDLE_SMOKE_OK {json.dumps(run_bundle_smoke(), ensure_ascii=False, sort_keys=True)}")
+        raise SystemExit(0)
+
     startup_config = get_config()
     startup_server_cfg = resolve_server_config(startup_config["server"])
     startup_host = str(startup_server_cfg["host"])
