@@ -43,16 +43,36 @@
 
 ## 部署与运行
 
-Windows x64 推荐直接下载 Release 中已构建完毕的 `full` 版本，无需额外安装 Python 环境：
-[Release](https://github.com/RRHTY/tg-channel-sync/releases)
+从 [Release](https://github.com/RRHTY/tg-channel-sync/releases) 下载与你系统对应的压缩包。原生版本均已包含运行环境，无需安装 Python。
+
+### Windows x64
+
+下载 `tg-channel-sync-v0.5.2-windows-x64.zip`，解压到具有写权限的目录，然后双击同名 `.exe`。首次启动会自动打开 Web 页面，并在程序旁创建配置和数据目录。
+
+### Linux x64
+
+下载 `tg-channel-sync-v0.5.2-linux-x64.zip` 并解压后运行：
+
+```bash
+chmod +x tg-channel-sync-v0.5.2-linux-x64
+./tg-channel-sync-v0.5.2-linux-x64
+```
+
+Linux 原生版本面向 x86_64、glibc 2.35 或更高版本，不支持 Alpine/musl。NAS 和长期运行的服务器仍推荐使用下方的 Docker Compose 部署。
+
+原生版本会在可执行文件所在目录创建或使用：
+
+- `config.json`：运行配置
+- `data/`：数据库、日志和 session
+- `temp/`：下载重传和临时媒体
 
 ---
 
-### 运行环境要求
+### 从源码运行（开发者）
 
-- **Python 3.10+**
+需要 Python 3.10 或更高版本。
 
-### 运行步骤
+#### 运行步骤
 
 1. 克隆代码仓库并进入目录：
 
@@ -101,41 +121,31 @@ Windows x64 推荐直接下载 Release 中已构建完毕的 `full` 版本，无
 | 日志保留条数 | 控制数据库中的日志上限；页面只展示近期记录，导出包含当前保留的全部日志 |
 | 界面主题 | `CLover` 为黄绿、暖黄与青蓝配色；另提供 `Sakura Pop`、`Mint Melody`、`Starlight`，选择后即时预览，保存设置后持久化 |
 
-### 如何构建 Windows 便携版
+### 构建原生单文件版本
 
-如果你希望发布或自用 Windows 便携版，仓库内已提供 `PyInstaller` 打包文件和 PowerShell 构建脚本。
+构建必须在目标系统上执行：Windows 构建 Windows x64，Linux 构建 Linux x64。GitHub Actions 会在推送版本标签时并行完成两个平台的测试、构建、冒烟验证和 Release 发布。
 
-1. 进入项目目录并启用虚拟环境：
+1. 创建并启用虚拟环境，安装依赖和 PyInstaller：
 
    ```powershell
+   python -m venv venv
    .\venv\Scripts\activate
-   ```
-2. 安装依赖并补充打包工具：
-
-   ```powershell
    pip install -r requirements.txt
    pip install pyinstaller
    ```
-3. 执行打包脚本：
+2. Windows 执行：
 
    ```powershell
-   .\build-portable.ps1
+   .\build-release.ps1
    ```
-4. 打包完成后，产物会输出到 `dist-portable/`：
+   Linux 在已启用虚拟环境后执行：
 
-   - `tg-channel-sync-vX.Y.Z-windows-x64-portable.zip`：便携 exe 版，不包含 Python 环境
-   - `tg-channel-sync-vX.Y.Z-windows-x64-full.zip`：完整运行环境版，包含源码、精简 Python 运行时和依赖
-5. 便携版运行后会在程序目录旁生成或使用这些文件：
+   ```bash
+   python scripts/build_release.py
+   ```
+3. 产物输出到 `dist-release/`。每个 ZIP 只有一个同名目录，目录内只有一个自包含可执行文件；构建过程会从最终 ZIP 解压并执行 bundle smoke，验证动态业务模块、页面资源、版本和运行目录。
 
-   - `config.json`：运行配置
-   - `data/`：数据库、日志、session 等运行数据
-   - `temp/`：下载重传和临时媒体处理目录
-
-构建补充：
-
-1. `full` 包不再复制整个开发 `venv`，而是内置精简运行时
-2. 打包脚本默认使用当前 `VERSION` 文件内容生成压缩包名称
-3. 媒体指纹扰动采用纯 Python 方式处理，目标是改变基础哈希特征，不保证适用于所有平台或更严格的媒体查重逻辑
+媒体指纹扰动采用纯 Python 方式处理，目标是改变基础哈希特征，不保证适用于所有平台或更严格的媒体查重逻辑。
 
 ### Docker 部署
 

@@ -25,7 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "server": {
         "host": "127.0.0.1",
         "port": 8011,
-        "auto_open_browser": False,
+        "auto_open_browser": True,
     },
     "sync": {
         "default_delay": 5,
@@ -133,7 +133,7 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 
     server["host"] = _normalize_str(server.get("host", "127.0.0.1"), "127.0.0.1")
     server["port"] = _normalize_int(server.get("port", 8011), 8011)
-    server["auto_open_browser"] = _normalize_bool(server.get("auto_open_browser", False))
+    server["auto_open_browser"] = _normalize_bool(server.get("auto_open_browser", True), True)
 
     sync.pop("prefer_local_bot_api", None)
     sync["default_delay"] = _normalize_float(sync.get("default_delay", 5), 5, minimum=0.5)

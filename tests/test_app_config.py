@@ -90,6 +90,7 @@ class AppConfigTests(unittest.TestCase):
     def test_log_retention_defaults_are_present(self):
         config = app_config.get_config()
 
+        self.assertTrue(config["server"]["auto_open_browser"])
         self.assertEqual(config["sync"]["system_log_retention_limit"], 1000)
         self.assertEqual(config["sync"]["message_log_retention_limit"], 5000)
         self.assertFalse(config["app"]["debug_terminal_logs"])
