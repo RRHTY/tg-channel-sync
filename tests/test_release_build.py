@@ -9,6 +9,7 @@ from scripts.build_release import (
     detect_platform_tag,
     validate_release_archive,
 )
+from scripts.prepare_release import prepare_release_assets
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,35 @@ class ReleaseBuildTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "unexpected archive entries"):
                 validate_release_archive(archive, "release", "app")
+
+    def test_prepare_release_verifies_both_platforms_and_writes_combined_checksums(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "temp") as temp_dir:
+            root = Path(temp_dir)
+            expected_names = []
+            for platform_tag, suffix in (("windows-x64", ".exe"), ("linux-x64", "")):
+                basename = artifact_basename("v0.5.2", platform_tag)
+                binary = root / f"{basename}{suffix}"
+                binary.write_bytes(platform_tag.encode())
+                archive = root / f"{basename}.zip"
+                create_release_archive(binary, archive, basename)
+                digest = __import__("hashlib").sha256(archive.read_bytes()).hexdigest()
+                (root / f"{basename}.sha256").write_text(
+                    f"{digest}  {archive.name}\n",
+                    encoding="utf-8",
+                )
+                expected_names.append(archive.name)
+
+            checksum_file = prepare_release_assets(root, "v0.5.2", "v0.5.2")
+
+            self.assertEqual(checksum_file.name, "SHA256SUMS.txt")
+            contents = checksum_file.read_text(encoding="utf-8")
+            for name in expected_names:
+                self.assertIn(name, contents)
+
+    def test_prepare_release_rejects_tag_version_mismatch(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "temp") as temp_dir:
+            with self.assertRaisesRegex(RuntimeError, "does not match VERSION"):
+                prepare_release_assets(Path(temp_dir), "v0.5.2", "v0.5.1")
 
 
 if __name__ == "__main__":

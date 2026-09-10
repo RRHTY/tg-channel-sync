@@ -1,0 +1,112 @@
+name: Build and release native binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-22.04
+            platform: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Validate tag and version
+        shell: bash
+        run: python -c "import os; from pathlib import Path; version=Path('VERSION').read_text(encoding='utf-8').strip(); tag=os.environ['RELEASE_TAG']; assert version == tag, f'VERSION {version!r} does not match tag {tag!r}'"
+
+      - name: Install build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt pyinstaller pytest
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build and smoke-test native archive
+        run: python scripts/build_release.py
+
+      - name: Upload verified native archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.platform }}
+          path: |
+            dist-release/*-${{ matrix.platform }}.zip
+            dist-release/*-${{ matrix.platform }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download native archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: dist-release
+          merge-multiple: true
+
+      - name: Verify release assets and combine checksums
+        run: python scripts/prepare_release.py --assets-dir dist-release --tag "$RELEASE_TAG"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/releases/${RELEASE_TAG}.md"
+          test -f "$notes"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$notes" --latest
+            gh release upload "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS.txt --clobber
+          else
+            gh release create "$RELEASE_TAG" dist-release/*.zip dist-release/SHA256SUMS.txt \
+              --verify-tag --title "$RELEASE_TAG" --notes-file "$notes" --latest
+          fi
