@@ -59,6 +59,17 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertIn('label="接收频道"', content)
         self.assertIn('class="delete-action"', content)
 
+    def test_more_options_look_and_read_like_expandable_panels(self):
+        app_content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        css_content = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="details-summary-copy"', app_content)
+        self.assertIn('class="details-summary-hint"', app_content)
+        self.assertIn(".compact-details summary::after", css_content)
+        self.assertIn(".compact-details[open] summary::after", css_content)
+        self.assertIn("border-radius: 14px", css_content)
+        self.assertIn(".compact-details[open]", css_content)
+
     def test_log_viewer_uses_one_switchable_panel(self):
         content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 

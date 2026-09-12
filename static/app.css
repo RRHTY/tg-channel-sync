@@ -100,11 +100,58 @@ fieldset.form-surface { min-width: 0; border: 0; padding: 0; margin: 0; }
 .field-hint { margin: 0; color: #64748b; font-size: 12px; line-height: 1.65; }
 .inline-warning { padding: 10px 12px; border: 1px solid #f3dc9e; border-radius: 12px; background: #fffbeb; color: #854d0e; font-size: 12px; line-height: 1.6; }
 .text-action { padding: 0 3px; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
-.compact-details { border-top: 1px solid var(--line); padding-top: 12px; }
-.compact-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink); padding: 4px 0; }
-.compact-details summary span { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 12px; }
-.compact-details[open] > .form-stack { margin-top: 14px; }
-.compact-details[open] > .form-surface { margin-top: 14px; }
+.compact-details {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface) 88%, var(--primary-soft));
+    transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+.compact-details summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 11px 14px;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    list-style: none;
+    cursor: pointer;
+    transition: color 160ms ease, background-color 160ms ease;
+}
+.compact-details summary::-webkit-details-marker { display: none; }
+.compact-details summary::after {
+    content: "";
+    width: 9px;
+    height: 9px;
+    margin: -4px 4px 0 0;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    color: var(--primary-ink);
+    transform: rotate(45deg);
+    transition: transform 160ms ease, margin 160ms ease;
+}
+.compact-details summary:hover { color: var(--primary-ink); background: var(--primary-soft); }
+.compact-details[open] {
+    border-color: color-mix(in srgb, var(--primary) 52%, var(--line));
+    background: var(--surface);
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--primary-dark) 9%, transparent);
+}
+.compact-details[open] summary {
+    border-bottom: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+    background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
+    color: var(--primary-ink);
+}
+.compact-details[open] summary::after { margin: 4px 4px 0 0; transform: rotate(225deg); }
+.details-summary-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.details-summary-title { font: inherit; color: inherit; }
+.details-summary-hint { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.compact-details[open] > .form-stack,
+.compact-details[open] > .form-surface,
+.compact-details[open] > .field-hint { margin: 0; padding: 14px; }
 .mapping-entry { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .mapping-route { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 10px; align-items: center; font-size: 13px; }
 .mapping-route strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

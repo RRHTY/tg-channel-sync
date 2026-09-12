@@ -51,16 +51,16 @@
 
 ### Windows x64
 
-下载 `tg-channel-sync-v0.5.2-windows-x64.zip`，解压到具有写权限的目录，然后双击同名 `.exe`。首次启动会自动打开 Web 页面，并在程序旁创建配置和数据目录。
+下载 `tg-channel-sync-v0.5.3-windows-x64.zip`，解压到具有写权限的目录，然后双击同名 `.exe`。首次启动会自动打开 Web 页面，并在程序旁创建配置和数据目录。
 
 ### Linux x64
 
-下载 `tg-channel-sync-v0.5.2-linux-x64.zip` 并解压后运行：
+下载 `tg-channel-sync-v0.5.3-linux-x64.zip` 并解压后运行：
 
 ```bash
-cd tg-channel-sync-v0.5.2-linux-x64
-chmod +x tg-channel-sync-v0.5.2-linux-x64
-./tg-channel-sync-v0.5.2-linux-x64
+cd tg-channel-sync-v0.5.3-linux-x64
+chmod +x tg-channel-sync-v0.5.3-linux-x64
+./tg-channel-sync-v0.5.3-linux-x64
 ```
 
 Linux 原生版本面向 x86_64、glibc 2.35 或更高版本，不支持 Alpine/musl。NAS 和长期运行的服务器仍推荐使用下方的 Docker Compose 部署。
