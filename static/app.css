@@ -90,6 +90,21 @@
     --log-border: #333a68;
 }
 * { box-sizing: border-box; }
+.compact-details { border-top: 1px solid var(--line); padding-top: 12px; }
+.compact-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink); padding: 4px 0; }
+.compact-details summary span { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 12px; }
+.compact-details[open] > .form-stack { margin-top: 14px; }
+.mapping-entry { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.mapping-route { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 10px; align-items: center; font-size: 13px; }
+.mapping-route strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mapping-meta { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.mapping-paused { background: var(--body-base); border-style: dashed; }
+.mapping-editor { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 14px; }
+.inline-actions { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+.inline-actions button { color: var(--primary-ink); font-size: 12px; font-weight: 600; padding: 4px 0; background: transparent; cursor: pointer; }
+.inline-actions button:hover { text-decoration: underline; }
+.inline-actions .danger-text { color: #b33d4c; }
+button:disabled { cursor: not-allowed; opacity: .55; }
 html { scroll-behavior: smooth; }
 body {
     min-height: 100vh;

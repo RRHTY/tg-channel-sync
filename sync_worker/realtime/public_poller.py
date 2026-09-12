@@ -104,7 +104,7 @@ async def process_public_channel_mapping_group(bot, user_app, group: dict):
     source_username_override = "" if source_ref.lstrip("-").isdigit() else source_ref
     previous_mode = sync_state.get("mode", "")
     sync_state["mode"] = "PUBLIC"
-    completed_max_seen_id = last_message_id
+    paused_targets = set()
     try:
         for message_group in group_messages(messages):
             if sync_state.get("is_syncing") or not message_group:
@@ -112,6 +112,13 @@ async def process_public_channel_mapping_group(bot, user_app, group: dict):
             group_max_id = max(int(getattr(item, "id", 0) or 0) for item in message_group)
             for target_mapping in group["mappings"]:
                 target_id = int(target_mapping["target_id"])
+                if target_id in paused_targets:
+                    continue
+                if not await db.is_channel_mapping_enabled(source_id, target_id):
+                    paused_targets.add(target_id)
+                    continue
+                if group_max_id <= int(target_mapping.get("last_polled_message_id", last_message_id)):
+                    continue
                 result = await _process_public_target(
                     bot,
                     user_app,
@@ -125,9 +132,7 @@ async def process_public_channel_mapping_group(bot, user_app, group: dict):
                     raise RuntimeError(
                         f"公开频道消息处理未完成: source={source_id} target={target_id} group_max_id={group_max_id} result={result}"
                     )
-            completed_max_seen_id = max(completed_max_seen_id, group_max_id)
-        if completed_max_seen_id > last_message_id:
-            await db.update_public_user_poll_position(source_id, source_ref, completed_max_seen_id)
+                await db.update_public_user_poll_position(source_id, source_ref, group_max_id, target_id=target_id)
     finally:
         sync_state["mode"] = previous_mode
 

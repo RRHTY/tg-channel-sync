@@ -86,7 +86,7 @@
                 ></log-viewer>
             </div>
             <div class="console-side">
-                <channel-mapping :mappings="mappings" @add="addMapping" @del="deleteMapping" @log-error="showAppError"></channel-mapping>
+                <channel-mapping :mappings="mappings" :save-mapping="addMapping" :update-mapping="updateMapping" @use="useMapping" @del="deleteMapping" @log-error="showAppError"></channel-mapping>
                 <global-filters :settings="settings" :rules="filterRules" :new-rule="newFilter" @save-settings="saveGlobalSettings" @add-rule="addFilter" @del-rule="deleteFilter"></global-filters>
             </div>
         </div>

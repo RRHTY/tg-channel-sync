@@ -8,6 +8,8 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from functools import wraps
+from typing import Literal
+from pydantic import BaseModel, Field
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, Form, Request
@@ -577,6 +579,9 @@ async def get_mappings():
             "source_ref": row[6] or "",
             "last_polled_message_id": int(row[7] or 0),
             "target_type": row[8] or "channel",
+            "enabled": bool(row[9]),
+            "source_title": row[10] or row[6] or str(row[0]),
+            "target_title": row[11] or ("收藏夹" if row[8] == "saved" else str(row[1])),
         }
         for row in await db.get_all_channel_mappings()
     ]
@@ -654,6 +659,17 @@ async def add_mapping(
             last_polled_message_id=last_polled_message_id,
             target_type="saved" if is_saved_target else "channel",
         )
+        async def title_for(client, chat_id):
+            try:
+                chat = await asyncio.wait_for(client.get_chat(chat_id), 3)
+                return str(getattr(chat, "title", None) or getattr(chat, "first_name", None) or "")
+            except Exception:
+                return ""
+        source_title, target_title = await asyncio.gather(
+            title_for(loaded_bot_engine.pyro_user_app if source_mode == "public_user" else loaded_bot_engine.aiogram_bot, src),
+            title_for(loaded_bot_engine.aiogram_bot, tgt) if not is_saved_target else asyncio.sleep(0, result="收藏夹"),
+        )
+        await db.update_channel_mapping(src, tgt, source_title=source_title, target_title=target_title)
         if source_mode == "public_user":
             _ensure_public_channel_polling(loaded_bot_engine)
         mode_label = f"public:@{source_ref}" if source_mode == "public_user" else str(src)
@@ -670,6 +686,28 @@ async def add_mapping(
 async def delete_mapping(source_id: int, target_id: int | None = None):
     await db.delete_channel_mapping(source_id, target_id=target_id)
     return {"status": "success", "message": "规则已删除"}
+
+
+class MappingUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    enabled: bool | None = None
+    realtime_sender: Literal["bot", "user"] | None = None
+    realtime_fallback_to_user: bool | None = None
+    realtime_hash_perturb: bool | None = None
+    source_title: str | None = Field(None, max_length=100)
+    target_title: str | None = Field(None, max_length=100)
+
+
+@app.patch("/api/mappings/{source_id}/{target_id}")
+async def update_mapping(source_id: int, target_id: int, payload: MappingUpdate):
+    row = next((r for r in await db.get_all_channel_mappings() if r[0] == source_id and r[1] == target_id), None)
+    if row is None:
+        return {"status": "error", "message": "映射不存在，请刷新列表"}
+    changes = payload.model_dump(exclude_none=True)
+    if row[5] == "public_user" or row[8] == "saved":
+        changes["realtime_sender"] = "user"
+    await db.update_channel_mapping(source_id, target_id, **changes)
+    return {"status": "success", "message": "映射已更新"}
 
 
 @app.get("/api/filter_rules")

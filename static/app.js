@@ -39,58 +39,85 @@ const StatusOverview = {
 };
 
 const ChannelMapping = {
-  props:["mappings"],
+  props:["mappings", "saveMapping", "updateMapping"],
   components:{ AppCard, FieldGroup, MappingOptionBadges, EmptyState },
-  data(){ return { source:"", target:"", realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false, to_saved:false }; },
-  computed:{
-    mappingCount(){ return (this.mappings && this.mappings.mappings ? this.mappings.mappings.length : 0); }
-  },
+  data(){ return { source:"", target:"", realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false, to_saved:false, saving:false, editing:null, editForm:{}, actionKey:"" }; },
+  computed:{ mappingCount(){ return this.mappings?.mappings?.length || 0; } },
   methods:{
-    saveRule(){
-      if(!String(this.source || "").trim()){
-        this.$emit("log-error", "添加频道映射失败：源频道不能为空");
-        return;
+    async saveRule(){
+      if(!this.source.trim() || (!this.to_saved && !this.target.trim())){
+        this.$emit("log-error", "请填写源频道和目标频道"); return;
       }
-      if(!this.to_saved){
-        if(!String(this.target || "").trim()){
-          this.$emit("log-error", "添加频道映射失败：目标频道不能为空");
-          return;
-        }
-        if(String(this.source || "").trim() === String(this.target || "").trim()){
-          this.$emit("log-error", "添加频道映射失败：源频道和目标频道不能相同");
-          return;
-        }
-      }
-      this.$emit("add", this.source, this.target, {
-        realtime_sender: this.to_saved ? "user" : this.realtime_sender,
-        realtime_fallback_to_user: this.realtime_fallback_to_user ? "1" : "0",
-        realtime_hash_perturb: this.realtime_hash_perturb ? "1" : "0",
-        target_type: this.to_saved ? "saved" : "channel",
-      });
-      this.source = "";
-      this.target = "";
+      this.saving = true;
+      try {
+        const saved = await this.saveMapping(this.source, this.target, {
+          realtime_sender: this.to_saved ? "user" : this.realtime_sender,
+          realtime_fallback_to_user: this.realtime_fallback_to_user ? "1" : "0",
+          realtime_hash_perturb: this.realtime_hash_perturb ? "1" : "0",
+          target_type: this.to_saved ? "saved" : "channel",
+        });
+        if(saved){ this.source = ""; this.target = ""; }
+      } finally { this.saving = false; }
+    },
+    edit(item){
+      this.editing = item;
+      this.editForm = { source_title:item.source_title, target_title:item.target_title,
+        realtime_sender:item.realtime_sender, realtime_fallback_to_user:item.realtime_fallback_to_user,
+        realtime_hash_perturb:item.realtime_hash_perturb };
+    },
+    async saveEdit(){
+      this.saving = true;
+      try { if(await this.updateMapping(this.editing, this.editForm)) this.editing = null; }
+      finally { this.saving = false; }
+    },
+    async toggle(item){
+      this.actionKey = item.source_id + ":" + item.target_id;
+      try { await this.updateMapping(item, { enabled: !item.enabled }); }
+      finally { this.actionKey = ""; }
+    },
+    remove(item){
+      if(window.confirm("删除这条映射？已同步消息和去重记录会保留。")) this.$emit("del", item.source_id, item.target_id);
     }
   },
-  template:`<app-card>
-    <div class="panel-heading"><div><div class="panel-kicker">Realtime</div><h2 class="panel-title">频道映射</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
-    <div class="mapping-form">
-      <div class="form-row">
-        <field-group label="源频道"><input v-model="source" type="text" placeholder="ID 或 t.me 链接" class="input-box"></field-group>
-        <field-group v-if="!to_saved" label="目标频道"><input v-if="!to_saved" v-model="target" type="text" placeholder="ID 或 t.me 链接" class="input-box"></field-group>
+  template:`
+    <app-card>
+      <div class="panel-heading"><div><div class="panel-kicker">Realtime</div><h2 class="panel-title">频道映射</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
+      <div class="mapping-form">
+        <div class="form-row">
+          <field-group label="源频道"><input v-model="source" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
+          <field-group v-if="!to_saved" label="目标频道"><input v-if="!to_saved" v-model="target" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
+        </div>
+        <label class="identity-option"><input type="checkbox" v-model="to_saved" :disabled="saving">发送到收藏夹</label>
+        <details class="compact-details"><summary>发送策略<span>按需调整</span></summary>
+          <div class="form-stack">
+            <field-group label="发送身份"><select v-model="realtime_sender" :disabled="to_saved" class="input-box"><option value="bot">Bot</option><option value="user">辅助账号</option></select></field-group>
+            <label class="identity-option"><input type="checkbox" v-model="realtime_fallback_to_user">允许使用辅助账号读取或回退发送</label>
+            <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">重置图片 / 视频指纹</label>
+          </div>
+        </details>
+        <button @click="saveRule" :disabled="saving" class="btn-primary">{{ saving ? '保存中…' : '添加映射' }}</button>
       </div>
-      <label class="choice-card"><input type="checkbox" v-model="to_saved"><span><span class="choice-title">发送到收藏夹</span><span class="choice-description">使用当前辅助账号的 Saved Messages</span></span></label>
-      <div class="identity-panel">
-        <div class="identity-row"><span class="identity-label">发送身份</span><label class="identity-option"><input type="radio" :checked="!to_saved && realtime_sender === 'bot'" :disabled="to_saved" @change="realtime_sender='bot'">Bot</label><label class="identity-option"><input type="radio" :checked="to_saved || realtime_sender === 'user'" :disabled="to_saved" @change="realtime_sender='user'">辅助账号</label></div>
-        <div class="identity-row"><span class="identity-label">获取身份</span><label class="identity-option"><input type="radio" :checked="!realtime_fallback_to_user" @change="realtime_fallback_to_user=false">Bot</label><label class="identity-option"><input type="radio" :checked="realtime_fallback_to_user" @change="realtime_fallback_to_user=true">辅助账号</label></div>
-        <label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="realtime_hash_perturb">重置图片/视频指纹</label>
+      <div class="mapping-scroll mt-4 space-y-2">
+        <article v-for="item in mappings.mappings || []" :key="item.source_id + ':' + item.target_id" class="mapping-entry" :class="{ 'mapping-paused': !item.enabled }">
+          <div class="mapping-route"><strong :title="item.source_id">{{ item.source_title || item.source_id }}</strong><span aria-hidden="true">→</span><strong :title="item.target_id">{{ item.target_title || item.target_id }}</strong></div>
+          <div class="mapping-meta"><span>{{ item.enabled ? '已启用' : '已暂停' }}</span><span>{{ item.source_mode === 'public_user' ? '公开频道读取' : 'Bot 监听' }}</span></div>
+          <div class="inline-actions">
+            <button @click="$emit('use', item)">填入历史同步</button><button @click="edit(item)">编辑</button>
+            <button :disabled="!!actionKey" @click="toggle(item)">{{ item.enabled ? '暂停' : '恢复' }}</button><button @click="remove(item)" class="danger-text">删除</button>
+          </div>
+          <div v-if="editing && editing.source_id === item.source_id && editing.target_id === item.target_id" class="mapping-editor form-stack">
+            <div class="form-row"><field-group label="来源显示名称"><input v-model="editForm.source_title" maxlength="100" class="input-box"></field-group><field-group label="目标显示名称"><input v-model="editForm.target_title" maxlength="100" class="input-box"></field-group></div>
+            <field-group label="发送身份"><select v-model="editForm.realtime_sender" :disabled="item.source_mode === 'public_user' || item.target_type === 'saved'" class="input-box"><option value="bot">Bot</option><option value="user">辅助账号</option></select></field-group>
+            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_fallback_to_user">发送失败时允许辅助账号回退</label>
+            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">重置图片 / 视频指纹</label>
+            <div class="inline-actions"><button :disabled="saving" @click="saveEdit">保存修改</button><button :disabled="saving" @click="editing=null">取消</button></div>
+          </div>
+        </article>
+        <empty-state v-if="!mappingCount" text="添加映射后自动同步新消息"></empty-state>
       </div>
-      <button @click="saveRule" class="btn-primary">添加映射</button>
-    </div>
-    <div class="mapping-scroll mt-4 space-y-2 text-sm">
-      <div v-for="group in mappings.grouped_mappings || []" :key="group.target_id" class="mapping-group"><div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold text-slate-500">目标</span><span class="font-mono text-xs font-semibold text-slate-700">{{ group.target_id === -1 ? '收藏夹' : group.target_id }}</span></div><div class="space-y-2"><div v-for="item in group.sources" :key="item.source_id" class="mapping-item"><div class="min-w-0"><div class="truncate font-mono text-xs text-slate-700">{{ item.source_id }}</div><mapping-option-badges class="mt-1" :item="item"></mapping-option-badges></div><button @click="$emit('del', item.source_id, group.target_id)" class="delete-action">删除</button></div></div></div>
-      <empty-state v-if="!(mappings.grouped_mappings || []).length" text="暂无映射"></empty-state>
-    </div>
-  </app-card>`
+      <p class="field-hint mt-3">暂停从下一条起生效。公开频道恢复后补齐积压；Bot 监听暂停期间的消息可通过历史同步补齐。</p>
+    </app-card>
+  `
 };
 const SyncPanel = {
   components:{ FieldGroup, SenderIdentityOptions },
@@ -99,7 +126,7 @@ const SyncPanel = {
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; }
   },
-  template:`<div class="card">
+  template:`<div class="card" id="history-sync">
     <div class="panel-heading"><div><div class="panel-kicker">History</div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
     <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条发送结果待核对；重跑可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
     <div class="form-surface" :class="{ 'opacity-50 pointer-events-none': status.is_syncing }">

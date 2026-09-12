@@ -146,6 +146,9 @@ async def _migrate_channel_mappings(conn: aiosqlite.Connection) -> None:
         # 目标类型判别列："channel"(默认/既有，普通频道/群组) | "saved"(收藏夹/Saved Messages)。
         # saved 目标在 target_id 中存 SAVED_MESSAGES_TARGET_ID(-1) 占位值，避免存真实 own id 产生 stale-id。
         ("target_type", "ALTER TABLE channel_mappings ADD COLUMN target_type TEXT NOT NULL DEFAULT 'channel'"),
+        ("enabled", "ALTER TABLE channel_mappings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"),
+        ("source_title", "ALTER TABLE channel_mappings ADD COLUMN source_title TEXT NOT NULL DEFAULT ''"),
+        ("target_title", "ALTER TABLE channel_mappings ADD COLUMN target_title TEXT NOT NULL DEFAULT ''"),
     ):
         try:
             await conn.execute(column_sql)
@@ -321,6 +324,19 @@ async def has_channel_mapping(source_id: int, target_id: int) -> bool:
     return row is not None
 
 
+async def is_channel_mapping_enabled(source_id: int, target_id: int) -> bool:
+    return await _fetchone("SELECT 1 FROM channel_mappings WHERE source_id = ? AND target_id = ? AND enabled = 1", (source_id, target_id)) is not None
+
+
+async def update_channel_mapping(source_id: int, target_id: int, **changes) -> None:
+    allowed = {"enabled", "realtime_sender", "realtime_fallback_to_user", "realtime_hash_perturb", "source_title", "target_title"}
+    fields = [(key, value) for key, value in changes.items() if key in allowed]
+    if fields:
+        await _execute("UPDATE channel_mappings SET " + ", ".join(f"{key} = ?" for key, _ in fields)
+                       + " WHERE source_id = ? AND target_id = ?",
+                       tuple(value for _, value in fields) + (source_id, target_id), commit=True)
+
+
 async def would_create_channel_mapping_cycle(source_id: int, target_id: int) -> bool:
     if source_id == target_id:
         return True
@@ -343,7 +359,7 @@ async def would_create_channel_mapping_cycle(source_id: int, target_id: int) -> 
 
 
 async def get_target_channels(source_id: int) -> list[int]:
-    rows = await _fetchall("SELECT target_id FROM channel_mappings WHERE source_id = ? ORDER BY target_id", (source_id,))
+    rows = await _fetchall("SELECT target_id FROM channel_mappings WHERE source_id = ? AND enabled = 1 ORDER BY target_id", (source_id,))
     return [row[0] for row in rows]
 
 
@@ -356,7 +372,7 @@ async def get_target_channel_mappings(source_id: int, source_mode: str | None = 
     rows = await _fetchall(
         "SELECT target_id, realtime_sender, realtime_fallback_to_user, realtime_hash_perturb, source_mode, source_ref, "
         "target_type "
-        f"FROM channel_mappings WHERE source_id = ?{mode_clause} ORDER BY target_id",
+        f"FROM channel_mappings WHERE source_id = ? AND enabled = 1{mode_clause} ORDER BY target_id",
         params,
     )
     return [
@@ -376,7 +392,7 @@ async def get_target_channel_mappings(source_id: int, source_mode: str | None = 
 async def get_all_channel_mappings() -> list:
     return await _fetchall(
         "SELECT source_id, target_id, realtime_sender, realtime_fallback_to_user, realtime_hash_perturb, "
-        "source_mode, source_ref, last_polled_message_id, target_type "
+        "source_mode, source_ref, last_polled_message_id, target_type, enabled, source_title, target_title "
         "FROM channel_mappings ORDER BY target_id, source_id"
     )
 
@@ -385,7 +401,7 @@ async def get_public_user_mapping_groups() -> list[dict]:
     rows = await _fetchall(
         "SELECT source_id, source_ref, target_id, realtime_sender, realtime_fallback_to_user, "
         "realtime_hash_perturb, last_polled_message_id, target_type "
-        "FROM channel_mappings WHERE source_mode = 'public_user' AND source_ref != '' "
+        "FROM channel_mappings WHERE source_mode = 'public_user' AND source_ref != '' AND enabled = 1 "
         "ORDER BY source_id, target_id"
     )
     groups: dict[tuple[int, str], dict] = {}
@@ -400,7 +416,7 @@ async def get_public_user_mapping_groups() -> list[dict]:
                 "mappings": [],
             },
         )
-        group["last_polled_message_id"] = max(group["last_polled_message_id"], int(row[6] or 0))
+        group["last_polled_message_id"] = min(group["last_polled_message_id"], int(row[6] or 0))
         group["mappings"].append(
             {
                 "target_id": row[2],
@@ -410,18 +426,20 @@ async def get_public_user_mapping_groups() -> list[dict]:
                 "source_mode": "public_user",
                 "source_ref": source_ref,
                 "target_type": row[7] or "channel",
+                "last_polled_message_id": int(row[6] or 0),
             }
         )
     return list(groups.values())
 
 
-async def update_public_user_poll_position(source_id: int, source_ref: str, message_id: int) -> None:
+async def update_public_user_poll_position(source_id: int, source_ref: str, message_id: int, target_id: int | None = None) -> None:
     await _execute(
         "UPDATE channel_mappings "
         "SET last_polled_message_id = CASE "
         "WHEN last_polled_message_id > ? THEN last_polled_message_id ELSE ? END "
-        "WHERE source_mode = 'public_user' AND source_id = ? AND source_ref = ?",
-        (message_id, message_id, source_id, source_ref),
+        "WHERE source_mode = 'public_user' AND source_id = ? AND source_ref = ? AND enabled = 1"
+        + (" AND target_id = ?" if target_id is not None else ""),
+        (message_id, message_id, source_id, source_ref) + ((target_id,) if target_id is not None else ()),
         commit=True,
     )
 
@@ -459,7 +477,7 @@ async def get_all_target_msg_mappings(source_channel_id: int, source_msg_id: int
         "FROM message_mappings AS mm "
         "LEFT JOIN channel_mappings AS cm "
         "ON cm.source_id = mm.source_channel_id AND cm.target_id = mm.target_channel_id "
-        "WHERE mm.source_channel_id = ? AND mm.source_msg_id = ? ORDER BY mm.target_channel_id",
+        "WHERE mm.source_channel_id = ? AND mm.source_msg_id = ? AND COALESCE(cm.enabled, 1) = 1 ORDER BY mm.target_channel_id",
         (source_channel_id, source_msg_id),
     )
 

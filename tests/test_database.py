@@ -8,6 +8,21 @@ from services import sync_services
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mapping_pause_edit_and_resume_preserve_checkpoints(self):
+        await database.init_db()
+        await database.add_channel_mapping(100, 200, source_mode="public_user", source_ref="source", last_polled_message_id=10)
+        await database.add_channel_mapping(100, 300, source_mode="public_user", source_ref="source", last_polled_message_id=10)
+        await database.save_msg_mapping(100, 10, 200, 20)
+        await database.update_channel_mapping(100, 200, enabled=False, realtime_sender="user")
+        self.assertEqual(await database.get_target_channels(100), [300])
+        await database.update_public_user_poll_position(100, "source", 30)
+        await database.update_channel_mapping(100, 200, enabled=True)
+        group = (await database.get_public_user_mapping_groups())[0]
+        self.assertEqual(group["last_polled_message_id"], 10)
+        self.assertEqual(await database.get_target_msg_id(100, 10, 200), 20)
+        await database.init_db()
+        self.assertEqual((await database.get_public_user_mapping_groups())[0]["last_polled_message_id"], 10)
+
     async def asyncSetUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "data.db"
@@ -171,7 +186,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(group["source_id"], -1001)
         self.assertEqual(group["source_ref"], "public_source")
-        self.assertEqual(group["last_polled_message_id"], 12)
+        self.assertEqual(group["last_polled_message_id"], 10)
         self.assertEqual([item["target_id"] for item in group["mappings"]], [-2002, -2001])
 
     async def test_channel_mapping_duplicate_and_cycle_detection(self):

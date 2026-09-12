@@ -291,9 +291,27 @@
         const res = api.ensureSuccess(await api.postForm("/api/mappings", form), "添加频道映射失败");
         if (res.message) this.showToast(res.message);
         await this.loadMappings();
+        return true;
       } catch (exc) {
         this.handleApiError(exc, "添加频道映射失败");
+        return false;
       }
+    },
+    async updateMapping(item, changes) {
+      try {
+        api.ensureSuccess(await api.requestJson(`/api/mappings/${item.source_id}/${item.target_id}`, { method: "PATCH", json: changes }), "保存映射失败");
+        await this.loadMappings();
+        return true;
+      } catch (error) {
+        this.handleApiError(error, "保存映射失败");
+        return false;
+      }
+    },
+    useMapping(item) {
+      if (this.syncStatus.is_syncing || this.syncStarting) return this.showToast("请等待当前任务结束");
+      Object.assign(this.syncForm, { mode: "api", source_id: String(item.source_id), target_id: String(item.target_id), target_type: item.target_type, force_send: "0" });
+      document.getElementById("history-sync")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      this.showToast("已填入源和目标，请检查范围后启动");
     },
     async deleteMapping(sourceId, targetId) {
       try {
