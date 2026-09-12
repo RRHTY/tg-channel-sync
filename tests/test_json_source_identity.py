@@ -9,8 +9,7 @@ from sync_worker.json_import import process as importer
 class JsonSourceIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def source_for(self, data, path="result.json", username=""):
         with ExitStack() as stack:
-            stack.enter_context(patch.object(importer.os.path, "exists", return_value=True))
-            stack.enter_context(patch("builtins.open", mock_open(read_data=json.dumps(data))))
+            stack.enter_context(patch.object(importer, "load_json_export", return_value=data))
             stack.enter_context(patch.object(importer, "resolve_chat_id", AsyncMock(return_value=-100456)))
             context = stack.enter_context(patch.object(importer, "build_link_rewrite_context", AsyncMock(return_value={})))
             stack.enter_context(patch.object(importer.db, "get_all_settings", AsyncMock(return_value={})))

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sync_worker.media.hash_perturb import perturb_clone_media
@@ -14,7 +15,7 @@ class HashPerturbTests(unittest.TestCase):
         async def run_test():
             with patch("main.sync_state", {"is_syncing": False}), \
                  patch("main.bot_engine.aiogram_bot", object()), \
-                 patch("main.bot_engine.pyro_user_app", object()), \
+                 patch("main.bot_engine.pyro_user_app", SimpleNamespace(is_initialized=True)), \
                  patch("main.resolve_chat_id", AsyncMock(side_effect=[-1001, -1002])), \
                  patch("main.db.add_sys_log", AsyncMock()), \
                  patch("main.process_master_sync", AsyncMock()):
@@ -31,6 +32,8 @@ class HashPerturbTests(unittest.TestCase):
                     json_source_username="",
                     force_send="0",
                     hash_perturb="1",
+                    target_type="channel",
+                    clone_fallback_to_user="1",
                 )
             self.assertEqual(result["status"], "success")
 

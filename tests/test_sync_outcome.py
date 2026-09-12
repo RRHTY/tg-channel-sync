@@ -69,8 +69,8 @@ class SyncOutcomeTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import mock_open
         for content in ("{", '[]', '{"messages": {}}', '{"messages": [null]}'):
             with self.subTest(content=content), \
-                 patch.object(importer.os.path, "exists", return_value=True), \
-                 patch("builtins.open", mock_open(read_data=content)):
+                 patch('services.sync_validation.Path.is_file', return_value=True), \
+                 patch('services.sync_validation.Path.open', mock_open(read_data=content)):
                 with self.assertRaises(importer.JsonSyncFatalError):
                     await importer.process_json_sync("bot", "target", "invalid.json", .5, False)
 
@@ -83,8 +83,7 @@ class SyncOutcomeTests(unittest.IsolatedAsyncioTestCase):
         ]}
         with ExitStack() as stack:
             stack.enter_context(patch.dict(importer.sync_state, {"stop_requested": False}))
-            stack.enter_context(patch.object(importer.os.path, "exists", return_value=True))
-            stack.enter_context(patch("builtins.open", mock_open(read_data=json.dumps(data))))
+            stack.enter_context(patch.object(importer, "load_json_export", return_value=data))
             for name, value in (("resolve_chat_id", -100456), ("build_link_rewrite_context", {}),
                                 ("resolve_reply_target", None), ("update_state_and_check_skip", False),
                                 ("record_success", None), ("log_sync_error", None),
@@ -108,8 +107,7 @@ class SyncOutcomeTests(unittest.IsolatedAsyncioTestCase):
         target = {"sender": "bot", "client": bot}
         with ExitStack() as stack:
             stack.enter_context(patch.dict(importer.sync_state, {"stop_requested": False}))
-            stack.enter_context(patch.object(importer.os.path, "exists", return_value=True))
-            stack.enter_context(patch("builtins.open", mock_open(read_data=json.dumps(data))))
+            stack.enter_context(patch.object(importer, "load_json_export", return_value=data))
             for name, value in (("resolve_chat_id", -100456), ("build_link_rewrite_context", {}),
                                 ("resolve_reply_target", None), ("update_state_and_check_skip", False),
                                 ("log_sync_error", None), ("_select_json_upload_target", target)):
