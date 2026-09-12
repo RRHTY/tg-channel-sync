@@ -39,7 +39,9 @@ async def get_public_channel_last_message_id(user_app, source_ref: str) -> int:
 
 async def load_public_channel_new_messages(user_app, source_ref: str, last_message_id: int):
     messages = []
-    async for message in user_app.get_chat_history(public_channel_peer(source_ref), limit=100):
+    # Pyrogram paginates this iterator. Stop at our checkpoint, not at the
+    # newest page: otherwise advancing the cursor would discard older backlog.
+    async for message in user_app.get_chat_history(public_channel_peer(source_ref), limit=0):
         msg_id = int(getattr(message, "id", 0) or 0)
         if msg_id <= last_message_id:
             break
