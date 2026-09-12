@@ -111,7 +111,7 @@
       this.configForm.app.theme = this.applyTheme(this.configForm.app.theme, true);
     },
     async loadUserAuthStatus() {
-      this.userAuth = api.ensureSuccess(await api.getJson("/api/user_auth/status"), "加载辅助账号状态失败");
+      this.userAuth = api.ensureSuccess(await api.getJson("/api/user_auth/status"), "无法读取 Telegram 账号的登录状态");
       this.sendCodeCooldown = this.userAuth.send_code_cooldown || 0;
       this.updateUserAuthLabel();
     },
@@ -324,7 +324,7 @@
 
   const ruleAndMappingMethods = {
     async loadMappings() {
-      const result = api.ensureSuccess(await api.getJson("/api/mappings"), "加载频道映射失败");
+      const result = api.ensureSuccess(await api.getJson("/api/mappings"), "加载自动同步失败");
       this.mappings = { mappings: result.mappings || [], grouped_mappings: result.grouped_mappings || [] };
     },
     async loadFilters() {
@@ -339,10 +339,10 @@
     async saveGlobalSettings() {
       try {
         const form = api.buildFormData(this.settings);
-        const res = api.ensureSuccess(await api.postForm("/api/global_settings", form), "保存类型配置失败");
+        const res = api.ensureSuccess(await api.postForm("/api/global_settings", form), "保存选择失败");
         this.showToast(res.message);
       } catch (error) {
-        this.handleApiError(error, "保存类型配置失败");
+        this.handleApiError(error, "保存选择失败");
       }
     },
     appendLocalSystemLog(message, level = "WARNING") {
@@ -351,12 +351,12 @@
     async addMapping(source, target, options = {}) {
       try {
         const form = api.buildFormData({ source_id: source, target_id: target, ...options });
-        const res = api.ensureSuccess(await api.postForm("/api/mappings", form), "添加频道映射失败");
+        const res = api.ensureSuccess(await api.postForm("/api/mappings", form), "添加自动同步失败");
         if (res.message) this.showToast(res.message);
         await this.loadMappings();
         return true;
       } catch (exc) {
-        this.handleApiError(exc, "添加频道映射失败");
+        this.handleApiError(exc, "添加自动同步失败");
         return false;
       }
     },
@@ -379,11 +379,11 @@
     async deleteMapping(sourceId, targetId) {
       try {
         const suffix = targetId !== undefined ? `?target_id=${encodeURIComponent(targetId)}` : "";
-        const res = api.ensureSuccess(await api.deleteJson(`/api/mappings/${sourceId}${suffix}`), "删除频道映射失败");
+        const res = api.ensureSuccess(await api.deleteJson(`/api/mappings/${sourceId}${suffix}`), "删除自动同步失败");
         if (res.message) this.showToast(res.message);
         await this.loadMappings();
       } catch (exc) {
-        this.handleApiError(exc, "删除频道映射失败");
+        this.handleApiError(exc, "删除自动同步失败");
       }
     },
     async addFilter(rule) {
@@ -424,7 +424,7 @@
     restoreLastSyncParams() {
       if (!this.lastSyncParams || this.syncStarting || this.syncStatus.is_syncing) return;
       Object.assign(this.syncForm, this.lastSyncParams, { force_send: '0' });
-      this.showToast('已恢复上次参数；强制发送已关闭，请核对后启动');
+      this.showToast('已填入上次的内容；默认跳过已同步的消息，请核对后开始');
     },
     clearLastSyncParams() {
       this.lastSyncParams = null;
@@ -441,12 +441,12 @@
             return value || (key.includes("id") ? "0" : "");
           },
         });
-        const res = api.ensureSuccess(await api.postForm("/api/start_sync", payload), "启动任务失败");
+        const res = api.ensureSuccess(await api.postForm("/api/start_sync", payload), "开始同步失败");
         this.syncStatus = { ...this.syncStatus, is_syncing: true, starting: true };
         this.rememberSyncParams(submitted);
         if (res.message) this.showToast(res.message);
       } catch (error) {
-        this.handleApiError(error, "启动任务失败");
+        this.handleApiError(error, "开始同步失败");
       } finally {
         this.syncStarting = false;
       }
@@ -455,10 +455,10 @@
       if (this.connectionState !== "connected") return this.showToast("当前连接已中断，无法确认任务状态，请先恢复连接");
       this.stopping = true;
       try {
-        api.ensureSuccess(await api.postJson("/api/stop_sync", {}), "中断任务失败");
+        api.ensureSuccess(await api.postJson("/api/stop_sync", {}), "停止同步失败");
       } catch (error) {
         this.stopping = false;
-        this.handleApiError(error, "中断任务失败");
+        this.handleApiError(error, "停止同步失败");
       }
     },
   };
@@ -503,12 +503,12 @@
     async verifyUserCode(phoneCode) {
       this.authSubmitting = true;
       try {
-        const res = api.ensureSuccess(await api.postJson("/api/user_auth/sign_in", { phone_code: phoneCode }), "提交验证码失败");
-        this.showToast(res.message || "已提交验证码");
+        const res = api.ensureSuccess(await api.postJson("/api/user_auth/sign_in", { phone_code: phoneCode }), "登录失败");
+        this.showToast(res.message || "验证码已提交");
         await this.loadUserAuthStatus();
         await this.fetchAppInfo();
       } catch (error) {
-        this.handleApiError(error, "提交验证码失败");
+        this.handleApiError(error, "登录失败");
       } finally {
         this.authSubmitting = false;
       }
@@ -516,12 +516,12 @@
     async submitUserPassword(password) {
       this.authSubmitting = true;
       try {
-        const res = api.ensureSuccess(await api.postJson("/api/user_auth/check_password", { password }), "提交密码失败");
-        this.showToast(res.message || "已提交密码");
+        const res = api.ensureSuccess(await api.postJson("/api/user_auth/check_password", { password }), "登录失败");
+        this.showToast(res.message || "密码已提交");
         await this.loadUserAuthStatus();
         await this.fetchAppInfo();
       } catch (error) {
-        this.handleApiError(error, "提交密码失败");
+        this.handleApiError(error, "登录失败");
       } finally {
         this.authSubmitting = false;
       }
@@ -540,7 +540,7 @@
       }
     },
     async switchUserAccount() {
-      if (!window.confirm("确认切换辅助账号吗？\n当前账号会退出登录，并清除本地会话。")) return;
+      if (!window.confirm("要切换 Telegram 账号吗？\n当前账号会退出登录，你需要重新登录另一个账号。")) return;
       this.authSubmitting = true;
       try {
         const res = api.ensureSuccess(await api.postJson("/api/user_auth/switch_account", {}), "切换账号失败");

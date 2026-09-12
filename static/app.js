@@ -18,22 +18,22 @@ const {
 const HELP_LINK = "https://github.com/RRHTY/tg-channel-sync/issues/2";
 
 const BotApiHint = {
-  template: `<p class="text-xs text-gray-500 mt-1">可选。自行搭建 BOT API 可突破 Bot 上传 50M 限制，参考 <a :href="helpLink" target="_blank" class="text-blue-600 hover:underline">#2</a></p>`,
+  template: `<p class="text-xs text-gray-500 mt-1">只有自建了机器人接口才需要填写。<a :href="helpLink" target="_blank" class="text-blue-600 hover:underline">查看配置方法</a></p>`,
   data(){ return { helpLink: HELP_LINK }; }
 };
 
 const SetupWizard = {
   props:["config","saving"], components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint },
-  template:`<app-card class="max-w-3xl mx-auto"><section-header title="初始化向导" description="填写基础配置后即可开始使用，配置会保存到程序目录下的 config.json。"></section-header><form-section title="Bot 配置" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><field-group label="BOT_TOKEN（必填）"><input v-model="config.telegram.bot_token" type="text" class="input-box"></field-group><field-group label="BOT_API_BASE_URL（可选，例如 http://127.0.0.1:8081）"><input v-model="config.telegram.bot_api_base_url" type="text" class="input-box"><bot-api-hint></bot-api-hint></field-group></div></form-section><form-section title="高级配置" description="仅在使用 API 复制、下载重传等模式时需要。" title-class="text-sm font-bold text-gray-800"><div class="field-grid field-grid-md-2"><field-group label="API_ID"><input v-model="config.telegram.api_id" type="number" class="input-box"></field-group><field-group label="API_HASH"><input v-model="config.telegram.api_hash" type="text" class="input-box"></field-group></div></form-section><form-section title="代理配置" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><label class="flex items-center text-sm"><input v-model="config.proxy.enabled" type="checkbox" class="mr-2">启用代理</label><div class="field-grid field-grid-md-2" :class="{ 'opacity-50': !config.proxy.enabled }"><field-group label="HOST"><input v-model="config.proxy.host" type="text" class="input-box"></field-group><field-group label="PORT"><input v-model="config.proxy.port" type="number" class="input-box"></field-group><field-group label="USERNAME"><input v-model="config.proxy.username" type="text" class="input-box"></field-group><field-group label="PASSWORD"><input v-model="config.proxy.password" type="password" class="input-box"></field-group></div></div></form-section><action-bar class-name="action-bar mt-6"><button @click="$emit('save', true)" :disabled="saving" class="btn-primary">保存并重启</button><button @click="$emit('save', false)" :disabled="saving" class="btn-secondary">仅保存配置</button></action-bar></app-card>`
+  template:`<app-card class="max-w-3xl mx-auto"><section-header title="首次设置" description="先填写机器人 Token，其他设置可以稍后再改。"></section-header><form-section title="机器人" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><field-group label="机器人 Token（必填）"><input v-model="config.telegram.bot_token" type="text" class="input-box"></field-group><field-group label="自建机器人接口地址（选填）"><input v-model="config.telegram.bot_api_base_url" type="text" class="input-box"><bot-api-hint></bot-api-hint></field-group></div></form-section><form-section title="Telegram 账号" description="复制旧消息或保存到收藏夹时，需要在设置中登录账号。" title-class="text-sm font-bold text-gray-800"><div class="field-grid field-grid-md-2"><field-group label="账号 API ID"><input v-model="config.telegram.api_id" type="number" class="input-box"></field-group><field-group label="账号 API Hash"><input v-model="config.telegram.api_hash" type="text" class="input-box"></field-group></div></form-section><form-section title="网络代理" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><label class="flex items-center text-sm"><input v-model="config.proxy.enabled" type="checkbox" class="mr-2">启用代理</label><div class="field-grid field-grid-md-2" :class="{ 'opacity-50': !config.proxy.enabled }"><field-group label="代理地址"><input v-model="config.proxy.host" type="text" class="input-box"></field-group><field-group label="代理端口"><input v-model="config.proxy.port" type="number" class="input-box"></field-group><field-group label="代理用户名（选填）"><input v-model="config.proxy.username" type="text" class="input-box"></field-group><field-group label="代理密码（选填）"><input v-model="config.proxy.password" type="password" class="input-box"></field-group></div></div></form-section><action-bar class-name="action-bar mt-6"><button @click="$emit('save', true)" :disabled="saving" class="btn-primary">保存并重启</button><button @click="$emit('save', false)" :disabled="saving" class="btn-secondary">仅保存配置</button></action-bar></app-card>`
 };
 
 const StatusOverview = {
   props:["appInfo","status"],
   methods:{ tone(v){ if(["已连接","已登录","运行中"].includes(v)) return "status-tone-positive"; if(["初始化中","连接超时","等待验证码","等待两步验证","需要登录"].includes(v)) return "status-tone-warning"; if(["启动失败","未配置"].includes(v)) return "status-tone-negative"; return "status-tone-info"; } },
   template:`<section class="status-grid" aria-label="连接与任务状态">
-    <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">Bot</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div class="status-detail">{{ appInfo.bot.name || '未连接' }}</div></div>
-    <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">辅助账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else class="status-detail">{{ appInfo.user.name || '未登录' }}</div></div>
-    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : (status.result?.label || '空闲') }}</div><div class="status-detail">{{ status.mode || '等待任务' }}</div></div>
+    <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">机器人</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div v-if="appInfo.bot.name" class="status-detail">{{ appInfo.bot.name }}</div></div>
+    <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">Telegram 账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else-if="appInfo.user.name" class="status-detail">{{ appInfo.user.name }}</div></div>
+    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : (status.result?.label || '空闲') }}</div><div class="status-detail">{{ {api:'直接复制', clone:'下载后发送', json:'导入聊天记录'}[status.mode] || '' }}</div></div>
     <div class="status-card status-tone-neutral"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
   </section>`
 };
@@ -46,7 +46,7 @@ const ChannelMapping = {
   methods:{
     async saveRule(){
       if(!this.source.trim() || (!this.to_saved && !this.target.trim())){
-        this.$emit("log-error", "请填写源频道和目标频道"); return;
+        this.$emit("log-error", "请填写来源频道和接收频道"); return;
       }
       this.saving = true;
       try {
@@ -76,46 +76,46 @@ const ChannelMapping = {
       finally { this.actionKey = ""; }
     },
     remove(item){
-      if(window.confirm("删除这条映射？已同步消息和去重记录会保留。")) this.$emit("del", item.source_id, item.target_id);
+      if(window.confirm("删除这条自动同步？已经发出的消息和同步记录都会保留。")) this.$emit("del", item.source_id, item.target_id);
     }
   },
   template:`
     <app-card>
-      <div class="panel-heading"><div><div class="panel-kicker">Realtime</div><h2 class="panel-title">频道映射</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
+      <div class="panel-heading"><div><h2 class="panel-title">自动同步</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
       <div class="mapping-form">
         <div class="form-row">
-          <field-group label="源频道"><input v-model="source" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
-          <field-group v-if="!to_saved" label="目标频道"><input v-if="!to_saved" v-model="target" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
+          <field-group label="来源频道"><input v-model="source" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
+          <field-group v-if="!to_saved" label="接收频道"><input v-if="!to_saved" v-model="target" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
         </div>
-        <label class="identity-option"><input type="checkbox" v-model="to_saved" :disabled="saving">发送到收藏夹</label>
-        <details class="compact-details"><summary>发送策略<span>按需调整</span></summary>
+        <label class="identity-option"><input type="checkbox" v-model="to_saved" :disabled="saving">保存到我的 Telegram 收藏夹</label>
+        <details class="compact-details"><summary>更多选项</summary>
           <div class="form-stack">
-            <field-group label="发送身份"><select v-model="realtime_sender" :disabled="to_saved" class="input-box"><option value="bot">Bot</option><option value="user">辅助账号</option></select></field-group>
-            <label class="identity-option"><input type="checkbox" v-model="realtime_fallback_to_user">允许使用辅助账号读取或回退发送</label>
-            <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">重置图片 / 视频指纹</label>
+            <field-group label="用谁发送"><select v-model="realtime_sender" :disabled="to_saved" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
+            <label class="identity-option"><input type="checkbox" v-model="realtime_fallback_to_user">机器人无法读取或发送时，改用 Telegram 账号</label>
+            <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">微调图片和视频文件（不改变画面）</label>
           </div>
         </details>
-        <button @click="saveRule" :disabled="saving" class="btn-primary">{{ saving ? '保存中…' : '添加映射' }}</button>
+        <button @click="saveRule" :disabled="saving" class="btn-primary">{{ saving ? '保存中…' : '添加同步' }}</button>
       </div>
       <div class="mapping-scroll mt-4 space-y-2">
         <article v-for="item in mappings.mappings || []" :key="item.source_id + ':' + item.target_id" class="mapping-entry" :class="{ 'mapping-paused': !item.enabled }">
           <div class="mapping-route"><strong :title="item.source_id">{{ item.source_title || item.source_id }}</strong><span aria-hidden="true">→</span><strong :title="item.target_id">{{ item.target_title || item.target_id }}</strong></div>
-          <div class="mapping-meta"><span>{{ item.enabled ? '已启用' : '已暂停' }}</span><span>{{ item.source_mode === 'public_user' ? '公开频道读取' : 'Bot 监听' }}</span></div>
+          <div class="mapping-meta"><span>{{ item.enabled ? '已启用' : '已暂停' }}</span><span>{{ item.source_mode === 'public_user' ? 'Telegram 账号读取' : '机器人接收' }}</span></div>
           <div class="inline-actions">
             <button @click="$emit('use', item)">填入历史同步</button><button @click="edit(item)">编辑</button>
             <button :disabled="!!actionKey" @click="toggle(item)">{{ item.enabled ? '暂停' : '恢复' }}</button><button @click="remove(item)" class="danger-text">删除</button>
           </div>
           <div v-if="editing && editing.source_id === item.source_id && editing.target_id === item.target_id" class="mapping-editor form-stack">
-            <div class="form-row"><field-group label="来源显示名称"><input v-model="editForm.source_title" maxlength="100" class="input-box"></field-group><field-group label="目标显示名称"><input v-model="editForm.target_title" maxlength="100" class="input-box"></field-group></div>
-            <field-group label="发送身份"><select v-model="editForm.realtime_sender" :disabled="item.source_mode === 'public_user' || item.target_type === 'saved'" class="input-box"><option value="bot">Bot</option><option value="user">辅助账号</option></select></field-group>
-            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_fallback_to_user">发送失败时允许辅助账号回退</label>
-            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">重置图片 / 视频指纹</label>
+            <div class="form-row"><field-group label="来源备注"><input v-model="editForm.source_title" maxlength="100" class="input-box"></field-group><field-group label="接收方备注"><input v-model="editForm.target_title" maxlength="100" class="input-box"></field-group></div>
+            <field-group label="用谁发送"><select v-model="editForm.realtime_sender" :disabled="item.source_mode === 'public_user' || item.target_type === 'saved'" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
+            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_fallback_to_user">机器人发送失败时，改用 Telegram 账号</label>
+            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">微调图片和视频文件（不改变画面）</label>
             <div class="inline-actions"><button :disabled="saving" @click="saveEdit">保存修改</button><button :disabled="saving" @click="editing=null">取消</button></div>
           </div>
         </article>
-        <empty-state v-if="!mappingCount" text="添加映射后自动同步新消息"></empty-state>
+        <empty-state v-if="!mappingCount" text="选好两个频道，新增消息就会自动复制过去。"></empty-state>
       </div>
-      <p class="field-hint mt-3">暂停从下一条起生效。公开频道恢复后补齐积压；Bot 监听暂停期间的消息可通过历史同步补齐。</p>
+      <details class="compact-details mt-3"><summary>暂停期间的消息怎么办？</summary><p class="field-hint">正在发送的消息不会撤回。用 Telegram 账号读取的公开频道会在恢复后补齐；由机器人接收的消息，需要手动运行历史同步来补齐。</p></details>
     </app-card>
   `
 };
@@ -125,29 +125,29 @@ const SyncPanel = {
   computed:{
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; },
-    modeHint(){ return { api:"直接复制历史消息，适合日常补齐；需要辅助账号读取源频道。", clone:"下载后重新上传，适合迁移媒体；耗时和磁盘占用较高。", json:"导入 Telegram Desktop 导出的单个聊天 JSON；媒体文件须保留在导出目录中。" }[this.form.mode]; },
+    modeHint(){ return { api:"复制频道里的旧消息。", clone:"先下载文件，再发到目标位置。", json:"导入 Telegram 电脑版导出的聊天记录。" }[this.form.mode]; },
     needsLogin(){ return (this.form.mode !== "json" || this.form.sender === "user" || this.form.target_type === "saved") && this.userAuth?.status !== "authorized"; }
   },
   template:`<div class="card" id="history-sync">
-    <div class="panel-heading"><div><div class="panel-kicker">History</div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
-    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ status.mode }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条发送结果待核对；重跑可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
-    <div v-if="hasLastParams && !status.is_syncing" class="restore-bar"><button type="button" :disabled="starting" @click="$emit('restore')" class="text-action">恢复上次参数</button><span>仅保存在此浏览器</span><button type="button" @click="$emit('forget')" class="text-action">清除</button></div>
+    <div class="panel-heading"><div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
+    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ {api:'直接复制', clone:'下载后发送', json:'导入聊天记录'}[status.mode] }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条无法确认是否发送成功；再次运行可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
+    <div v-if="hasLastParams && !status.is_syncing" class="restore-bar"><button type="button" title="记录只保存在这个浏览器中" :disabled="starting" @click="$emit('restore')" class="text-action">沿用上次填写内容</button><button type="button" @click="$emit('forget')" class="text-action">清除记录</button></div>
     <fieldset class="form-surface" :disabled="status.is_syncing || starting" :class="{ 'opacity-50': status.is_syncing || starting }">
-      <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">API 复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载重传</button></div>
+      <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">直接复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载后发送</button></div>
       <p class="field-hint">{{ modeHint }}</p>
-      <p v-if="needsLogin" class="inline-warning">此模式需要辅助账号。<button type="button" class="text-action" @click="$emit('open-settings')">前往设置登录</button></p>
-      <div v-if="form.mode !== 'json'" class="form-row"><field-group label="源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="目标频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>
-      <div v-else class="form-surface"><field-group v-if="form.target_type !== 'saved'" label="目标频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group label="JSON 文件路径"><input v-model="form.json_path" placeholder="例如 D:/Export/result.json" class="input-box font-mono text-sm"></field-group><p class="field-hint">路径位于运行本程序的电脑上，并非浏览器上传；Docker 部署请使用容器内已挂载的路径。</p></div>
-      <label class="choice-card"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span><span class="choice-title">发送到收藏夹</span><span class="choice-description">使用当前辅助账号</span></span></label>
+      <p v-if="needsLogin" class="inline-warning">请先登录 Telegram 账号才能使用此功能。<button type="button" class="text-action" @click="$emit('open-settings')">前往设置登录</button></p>
+      <div v-if="form.mode !== 'json'" class="form-row"><field-group label="来源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="接收频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>
+      <div v-else class="form-surface"><field-group v-if="form.target_type !== 'saved'" label="接收频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group label="JSON 文件路径"><input v-model="form.json_path" placeholder="例如 D:/Export/result.json" class="input-box font-mono text-sm"></field-group><p class="field-hint">填写运行本程序的电脑上的文件路径，图片和视频不要移出导出文件夹。Docker 用户请填写容器内路径。</p></div>
+      <label class="choice-card"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span><span class="choice-title">保存到我的 Telegram 收藏夹</span></span></label>
       <div v-if="form.mode === 'api' || form.mode === 'clone'" class="form-row"><field-group label="起始消息 ID"><input v-model="form.start_id" type="number" min="0" placeholder="留空：从头开始" class="input-box"></field-group><field-group label="结束消息 ID"><input v-model="form.end_id" type="number" min="0" placeholder="留空：直到最新" class="input-box"></field-group></div>
-      <details class="compact-details"><summary>高级选项 · 延时与发送策略</summary><div class="form-surface">
+      <details class="compact-details"><summary>更多选项</summary><div class="form-surface">
         <sender-identity-options v-if="supportsSenderOptions" :sender="form.sender" :fallback-value="form.clone_fallback_to_user" :show-hash-option="supportsHashPerturb" :hash-value="form.hash_perturb" fallback-true-value="1" fallback-false-value="0" hash-true-value="1" hash-false-value="0" @update:sender="form.sender = $event" @update:fallback="form.clone_fallback_to_user = $event" @update:hash="form.hash_perturb = $event"></sender-identity-options>
-        <div v-if="form.mode === 'json'" class="form-row"><field-group label="源频道用户名（可选）"><input v-model="form.json_source_username" placeholder="@username，用于链接改写" class="input-box"></field-group><field-group label="媒体组合并窗口（秒）"><input v-model="form.json_media_group_window_seconds" type="number" min="1" step="1" class="input-box"></field-group></div>
-        <field-group label="单条延时（秒）"><input v-model="form.delay" type="number" step="0.5" min="0.5" class="input-box"></field-group>
-        <label class="choice-card"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0"><span><span class="choice-title">强制发送</span><span class="choice-description">忽略重复和断点记录，可能产生重复消息</span></span></label>
+        <div v-if="form.mode === 'json'" class="form-row"><field-group label="来源频道用户名（可选）"><input v-model="form.json_source_username" placeholder="@username，用于链接改写" class="input-box"></field-group><field-group label="相隔多少秒以内的消息合成相册"><input v-model="form.json_media_group_window_seconds" type="number" min="1" step="1" class="input-box"></field-group></div>
+        <field-group label="每条消息间隔（秒）"><input v-model="form.delay" type="number" step="0.5" min="0.5" class="input-box"></field-group>
+        <label class="choice-card"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0"><span><span class="choice-title">重新发送已同步的消息</span><span class="choice-description">会产生重复消息</span></span></label>
       </div></details>
     </fieldset>
-    <button v-if="!status.is_syncing" type="button" :disabled="starting || !connected" @click="$emit('start', form)" class="btn-primary mt-4">{{ starting ? '启动中…' : (!connected ? '等待连接恢复' : '启动任务') }}</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">中断中<span class="dot-anim"></span></button><button v-else type="button" :disabled="!connected" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">中断任务</button>
+    <button v-if="!status.is_syncing" type="button" :disabled="starting || !connected" @click="$emit('start', form)" class="btn-primary mt-4">{{ starting ? '启动中…' : (!connected ? '等待连接恢复' : '开始同步') }}</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">正在停止<span class="dot-anim"></span></button><button v-else type="button" :disabled="!connected" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">停止同步</button>
   </div>`
 };
 
@@ -187,13 +187,13 @@ const GlobalFilters = {
   },
   template:`<div class="space-y-4">
     <div class="card">
-      <div class="panel-heading"><div><div class="panel-kicker">Content</div><h2 class="panel-title">类型过滤</h2></div></div>
+      <div class="panel-heading"><div><h2 class="panel-title">要同步哪些内容</h2></div></div>
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4"><label v-for="(label, key) in typeLabels" :key="key" class="choice-card !p-2"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0"><span class="choice-title">{{ label }}</span></label></div>
-      <button @click="$emit('save-settings', settings)" class="btn-secondary">保存类型</button>
+      <button @click="$emit('save-settings', settings)" class="btn-secondary">保存选择</button>
     </div>
     <div class="card">
-      <div class="panel-heading"><div><div class="panel-kicker">Rules</div><h2 class="panel-title">正则过滤</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div>
-      <p class="field-hint mb-3">按添加顺序生效；屏蔽匹配文本或文件名，媒体组任一项命中则整组跳过。</p>
+      <div class="panel-heading"><div><h2 class="panel-title">内容过滤（正则）</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div>
+      <p class="field-hint mb-3">规则按列表顺序执行；相册中有一条被屏蔽，整组都会跳过。</p>
       <div class="filter-form mb-4">
         <select v-model="newRule.rule_type" aria-label="规则类型" class="input-box"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select>
         <input v-model="newRule.pattern" maxlength="1000" type="text" aria-label="正则表达式" placeholder="例如：广告|推广" class="input-box font-mono">
@@ -201,14 +201,14 @@ const GlobalFilters = {
         <label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0">区分大小写</label>
         <button @click="$emit('add-rule', newRule)" :disabled="!newRule.pattern" class="btn-primary">添加规则</button>
       </div>
-      <details class="compact-details mb-4"><summary>测试当前规则（不保存）</summary><div class="form-surface">
-        <p class="field-hint">仅测试上方草稿，使用与同步相同的 Python 正则。实际输入包含 HTML 标签；结果仅显示文本，不执行 HTML。</p>
+      <details class="compact-details mb-4"><summary>试一下这条规则</summary><div class="form-surface">
+        <p class="field-hint">只测试上方这条规则，不会保存或发送消息。带格式的文字按 HTML 匹配。</p>
         <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="预览文本" placeholder="粘贴一段示例文本…" class="input-box"></textarea>
         <input v-model="previewFile" maxlength="255" aria-label="预览文件名" placeholder="文件名（可选，例如 video.mp4）" class="input-box">
-        <button type="button" @click="preview" :disabled="previewBusy || !newRule.pattern" class="btn-secondary">{{ previewBusy ? '预览中…' : '预览效果' }}</button>
+        <button type="button" @click="preview" :disabled="previewBusy || !newRule.pattern" class="btn-secondary">{{ previewBusy ? '预览中…' : '查看结果' }}</button>
         <div v-if="previewResult" class="preview-result" role="status">
           <p v-if="previewResult.error" class="text-red-600">{{ previewResult.error }}</p>
-          <template v-else><p>{{ previewResult.dropped ? '命中：将屏蔽此消息（媒体组会整组跳过）' : (previewResult.matched ? '命中：替换后内容' : '未命中：内容保持不变') }}</p><pre v-if="!previewResult.dropped">{{ previewResult.text || '（空文本）' }}</pre></template>
+          <template v-else><p>{{ previewResult.dropped ? '这条消息会被跳过；同一相册也会一起跳过' : (previewResult.matched ? '替换后的内容' : '没有匹配到，内容不变') }}</p><pre v-if="!previewResult.dropped">{{ previewResult.text || '（空文本）' }}</pre></template>
         </div>
       </div></details>
       <ul class="rule-scroll space-y-2 text-sm border-t border-slate-100 pt-4"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><span class="min-w-0 break-all font-mono text-xs"><span class="field-hint">{{ ['drop','skip_media'].includes(rule.rule_type) ? '屏蔽' : '替换' }}</span> {{ rule.pattern }} <span v-if="['replace','replace_text'].includes(rule.rule_type)" class="text-emerald-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul>
@@ -224,8 +224,8 @@ const UserAuthPanel = {
     <app-card id="settings-account" class="settings-section-card">
       <div class="settings-section-header">
         <div class="settings-section-title-row">
-          <h2 class="settings-section-title">辅助账号</h2>
-          <field-badge text="按步骤完成"></field-badge>
+          <h2 class="settings-section-title">Telegram 账号</h2>
+
         </div>
       </div>
 
@@ -236,28 +236,28 @@ const UserAuthPanel = {
               <div class="settings-auth-status-title">当前状态</div>
               <div class="settings-auth-status-text mt-1">{{ auth.status_label || '未登录' }}</div>
             </div>
-            <field-badge :text="auth.status === 'authorized' ? '已授权' : '待处理'" :tone="auth.status === 'authorized' ? 'muted' : ''"></field-badge>
+
           </div>
           <div class="settings-auth-meta">
             <div class="text-xs text-slate-500" v-if="auth.phone_number">手机号：{{ auth.phone_number }}</div>
             <div class="text-xs text-amber-700" v-if="auth.password_hint">密码提示：{{ auth.password_hint }}</div>
-            <div class="text-xs text-slate-500" v-if="!auth.phone_number && !auth.password_hint">尚未绑定辅助账号，发送验证码后继续。</div>
+
           </div>
           <div v-if="auth.status === 'authorized'" class="pt-1">
             <button @click="$emit('switch-account')" :disabled="submitting" class="btn-secondary md:w-auto">切换账号</button>
           </div>
         </div>
 
-        <div class="settings-auth-step">
+        <div v-if="auth.status !== 'authorized'" class="settings-auth-step">
           <div class="settings-auth-step-title">
-            {{ auth.awaiting_password ? '步骤 3 · 输入两步验证密码' : (auth.awaiting_code ? '步骤 2 · 输入验证码' : '步骤 1 · 发送验证码') }}
+            {{ auth.awaiting_password ? '输入两步验证密码' : (auth.awaiting_code ? '输入验证码' : '输入手机号') }}
           </div>
           <p class="settings-auth-step-description">
             {{ auth.awaiting_password
-              ? '如果账号开启了两步验证，请输入密码完成授权。'
+              ? '如果账号开启了两步验证，请输入密码登录。'
               : (auth.awaiting_code
-                ? '验证码发送成功后，在这里提交收到的登录验证码。'
-                : '输入辅助账号手机号，系统会向 Telegram 发送验证码。') }}
+                ? '请填写 Telegram 发来的验证码。'
+                : '请使用你的 Telegram 手机号，包含国家或地区代码。') }}
           </p>
 
           <div class="form-stack mt-4">
@@ -271,7 +271,7 @@ const UserAuthPanel = {
             <div v-if="auth.awaiting_code" class="form-stack">
               <input v-model="phoneCode" type="text" placeholder="输入验证码" class="input-box">
               <action-bar>
-                <button @click="$emit('verify-code', phoneCode)" :disabled="submitting" class="btn-primary">提交验证码</button>
+                <button @click="$emit('verify-code', phoneCode)" :disabled="submitting" class="btn-primary">登录</button>
                 <button @click="$emit('cancel-auth')" :disabled="submitting" class="btn-secondary">取消</button>
               </action-bar>
             </div>
@@ -279,7 +279,7 @@ const UserAuthPanel = {
             <div v-if="auth.awaiting_password" class="form-stack">
               <input v-model="password" type="password" placeholder="输入两步验证密码" class="input-box">
               <action-bar>
-                <button @click="$emit('submit-password', password)" :disabled="submitting" class="btn-primary">提交密码</button>
+                <button @click="$emit('submit-password', password)" :disabled="submitting" class="btn-primary">登录</button>
                 <button @click="$emit('cancel-auth')" :disabled="submitting" class="btn-secondary">取消</button>
               </action-bar>
             </div>
@@ -326,7 +326,7 @@ const SettingsPanel = {
         <div class="settings-section-header">
           <div class="settings-section-title-row">
             <h2 class="settings-section-title">界面主题</h2>
-            <field-badge text="即时预览"></field-badge>
+
           </div>
         </div>
         <div class="theme-picker" role="radiogroup" aria-label="界面主题">
@@ -354,28 +354,28 @@ const SettingsPanel = {
       <app-card id="settings-basic" class="settings-section-card">
         <div class="settings-section-header">
           <div class="settings-section-title-row">
-            <h2 class="settings-section-title">基础配置</h2>
-            <field-badge text="多数需重启"></field-badge>
+            <h2 class="settings-section-title">连接设置</h2>
+
           </div>
         </div>
 
         <div class="settings-grid settings-grid-12">
           <setting-group
             class="span-8 span-12"
-            title="Telegram 接入"
+            title="机器人与账号"
           >
             <div class="settings-grid settings-grid-12">
-              <field-group class="span-12" label="BOT_TOKEN" badge="需重启">
+              <field-group class="span-12" label="机器人 Token">
                 <input v-model="config.telegram.bot_token" type="text" class="input-box">
               </field-group>
-              <field-group class="span-12" label="BOT_API_BASE_URL" badge="需重启">
+              <field-group class="span-12" label="自建机器人接口地址（选填）">
                 <input v-model="config.telegram.bot_api_base_url" type="text" class="input-box">
                 <bot-api-hint></bot-api-hint>
               </field-group>
-              <field-group class="span-6" label="API_ID" badge="需重启">
+              <field-group class="span-6" label="账号 API ID">
                 <input v-model="config.telegram.api_id" type="number" class="input-box">
               </field-group>
-              <field-group class="span-6" label="API_HASH" badge="需重启">
+              <field-group class="span-6" label="账号 API Hash">
                 <input v-model="config.telegram.api_hash" type="text" class="input-box">
               </field-group>
             </div>
@@ -383,18 +383,18 @@ const SettingsPanel = {
 
           <setting-group
             class="span-4 span-12"
-            title="程序行为"
+            title="程序设置"
           >
             <div class="settings-grid-tight">
-              <field-group label="服务端口" badge="需重启">
+              <field-group label="网页端口">
                 <input v-model="config.server.port" type="number" class="input-box">
               </field-group>
-              <field-group label="默认延时（秒）">
+              <field-group label="每条消息间隔（秒）">
                 <input v-model="config.sync.default_delay" type="number" step="0.5" min="0.5" class="input-box">
               </field-group>
               <toggle-field
                 label="启动后自动打开浏览器"
-                badge="需重启"
+
                 :checked="config.server.auto_open_browser"
                 @update:checked="config.server.auto_open_browser = $event"
               ></toggle-field>
@@ -403,26 +403,26 @@ const SettingsPanel = {
 
           <setting-group
             class="span-12"
-            title="代理网络"
+            title="网络代理"
           >
             <div class="settings-grid-tight">
               <toggle-field
                 label="启用代理"
-                badge="需重启"
+
                 :checked="config.proxy.enabled"
                 @update:checked="config.proxy.enabled = $event"
               ></toggle-field>
               <div class="settings-grid settings-grid-md-2" :class="{ 'opacity-60': !config.proxy.enabled }">
-                <field-group label="HOST" badge="需重启">
+                <field-group label="代理地址">
                   <input v-model="config.proxy.host" type="text" class="input-box">
                 </field-group>
-                <field-group label="PORT" badge="需重启">
+                <field-group label="代理端口">
                   <input v-model="config.proxy.port" type="number" class="input-box">
                 </field-group>
-                <field-group label="USERNAME" badge="需重启">
+                <field-group label="代理用户名（选填）">
                   <input v-model="config.proxy.username" type="text" class="input-box">
                 </field-group>
-                <field-group label="PASSWORD" badge="需重启">
+                <field-group label="代理密码（选填）">
                   <input v-model="config.proxy.password" type="password" class="input-box">
                 </field-group>
               </div>
@@ -434,8 +434,8 @@ const SettingsPanel = {
       <app-card id="settings-sync" class="settings-section-card">
         <div class="settings-section-header">
           <div class="settings-section-title-row">
-            <h2 class="settings-section-title">同步配置</h2>
-            <field-badge text="运行策略"></field-badge>
+            <h2 class="settings-section-title">同步设置</h2>
+
           </div>
         </div>
 
@@ -445,12 +445,12 @@ const SettingsPanel = {
           >
             <div class="toggle-grid">
               <toggle-field
-                label="默认强制发送"
+                label="默认重新发送已同步的消息" description="开启后会产生重复消息"
                 :checked="config.sync.force_send"
                 @update:checked="config.sync.force_send = $event"
               ></toggle-field>
               <toggle-field
-                label="为外部转发/回复追加来源前缀"
+                label="在转发或回复的内容前标明原始来源"
                 :checked="config.sync.add_external_source_header"
                 @update:checked="config.sync.add_external_source_header = $event"
               ></toggle-field>
@@ -458,10 +458,10 @@ const SettingsPanel = {
           </setting-group>
 
           <setting-group
-            title="上传与下载参数"
+            title="文件上传"
           >
             <div class="toggle-grid">
-              <field-group label="未启用本地 Bot API 时的单文件上限（MB）">
+              <field-group label="机器人单个文件上传上限（MB）">
                 <input v-model="config.sync.bot_upload_max_mb" type="number" step="1" min="1" class="input-box">
               </field-group>
             </div>
@@ -470,25 +470,25 @@ const SettingsPanel = {
 
         <setting-group
           class="mt-4"
-          title="多 Bot 上传限流轮换"
+          title="多个机器人轮流上传"
         >
           <div class="settings-grid-tight">
-            <field-group label="额外 BOT_TOKEN" badge="需重启" hint="每行一个，用于上传轮换。">
+            <field-group label="其他机器人 Token" hint="每行填写一个 Token。">
               <textarea v-model="config.telegram.extra_bot_tokens" rows="4" class="input-box font-mono text-sm"></textarea>
             </field-group>
             <toggle-field
-              label="启用多 Bot 上传限流轮换"
+              label="达到上传量上限后换一个机器人"
               :checked="config.sync.bot_rate_limit_enabled"
               @update:checked="config.sync.bot_rate_limit_enabled = $event"
             ></toggle-field>
             <div class="settings-grid settings-grid-md-3" :class="{ 'opacity-60': !config.sync.bot_rate_limit_enabled }">
-              <field-group label="阈值（GB）">
+              <field-group label="上传量上限（GB）">
                 <input v-model="config.sync.bot_rate_limit_gb" type="number" step="0.1" min="0.1" class="input-box">
               </field-group>
-              <field-group label="统计窗口（小时）">
+              <field-group label="计算最近多少小时的上传量">
                 <input v-model="config.sync.bot_rate_limit_window_hours" type="number" step="1" min="1" class="input-box">
               </field-group>
-              <field-group label="冷却时间（分钟）">
+              <field-group label="每次暂停上传多久（分钟）">
                 <input v-model="config.sync.bot_rate_limit_cooldown_minutes" type="number" step="1" min="1" class="input-box">
               </field-group>
             </div>
@@ -499,22 +499,22 @@ const SettingsPanel = {
       <app-card id="settings-logs" class="settings-section-card">
         <div class="settings-section-header">
           <div class="settings-section-title-row">
-            <h2 class="settings-section-title">日志配置</h2>
-            <field-badge text="保留策略" tone="muted"></field-badge>
+            <h2 class="settings-section-title">日志设置</h2>
+
           </div>
         </div>
 
         <div class="settings-grid settings-grid-md-2">
-          <field-group label="系统日志最大保留条数">
+          <field-group label="系统日志保留条数">
             <input v-model="config.sync.system_log_retention_limit" type="number" step="1" min="100" class="input-box">
           </field-group>
-          <field-group label="消息日志最大保留条数">
+          <field-group label="消息日志保留条数">
             <input v-model="config.sync.message_log_retention_limit" type="number" step="1" min="100" class="input-box">
           </field-group>
         </div>
         <div class="mt-4">
           <toggle-field
-            label="Debug 模式：同步输出日志到终端"
+            label="在终端显示调试日志"
             :checked="config.app.debug_terminal_logs"
             @update:checked="config.app.debug_terminal_logs = $event"
           ></toggle-field>
@@ -536,7 +536,7 @@ const SettingsPanel = {
         <div class="settings-section-header !mb-0 !border-b-0 !pb-0">
           <div class="settings-section-title-row">
             <h2 class="settings-section-title">操作</h2>
-            <span class="settings-compact-note">保存配置后可按需立即重启服务</span>
+            <span class="settings-compact-note">修改机器人、账号或网络设置后，需要重启程序。</span>
           </div>
         </div>
         <action-bar class-name="action-bar mt-4">

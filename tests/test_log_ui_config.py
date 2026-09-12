@@ -26,9 +26,9 @@ class LogUiConfigTests(unittest.TestCase):
     def test_settings_panel_contains_log_retention_fields(self):
         content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn("系统日志最大保留条数", content)
-        self.assertIn("消息日志最大保留条数", content)
-        self.assertIn("Debug 模式：同步输出日志到终端", content)
+        self.assertIn("系统日志保留条数", content)
+        self.assertIn("消息日志保留条数", content)
+        self.assertIn("在终端显示调试日志", content)
         self.assertIn("导出可获取当前保留的全部日志", content)
 
     def test_home_page_binds_log_export_actions(self):
@@ -55,8 +55,8 @@ class LogUiConfigTests(unittest.TestCase):
 
         self.assertIn('class="status-grid"', content)
         self.assertIn('class="mode-switch"', content)
-        self.assertIn('label="源频道"', content)
-        self.assertIn('label="目标频道"', content)
+        self.assertIn('label="来源频道"', content)
+        self.assertIn('label="接收频道"', content)
         self.assertIn('class="delete-action"', content)
 
     def test_log_viewer_uses_one_switchable_panel(self):

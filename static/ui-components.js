@@ -130,11 +130,11 @@ const MappingOptionBadges = {
   computed: {
     badges() {
       const item = this.item || {};
-      const values = [`发送:${item.realtime_sender === "user" ? "辅助账号" : "Bot"}`];
+      const values = [`发送:${item.realtime_sender === "user" ? "Telegram 账号" : "Bot"}`];
       if (item.source_mode === "public_user") {
-        values.push("获取:辅助账号");
+        values.push("获取:Telegram 账号");
       } else {
-        values.push(`获取:${item.realtime_fallback_to_user ? "Bot/辅助账号" : "Bot"}`);
+        values.push(`获取:${item.realtime_fallback_to_user ? "Bot/Telegram 账号" : "Bot"}`);
       }
       if (item.realtime_hash_perturb) values.push("重置指纹");
       return values;
@@ -178,15 +178,15 @@ const SenderIdentityOptions = {
   },
   template: `<div class="identity-panel">
     <div class="identity-row">
-      <span class="identity-label">发送身份</span>
-      <label class="identity-option"><input type="radio" :checked="sender === 'bot'" value="bot" @change="onSenderChange">Bot</label>
-      <label class="identity-option"><input type="radio" :checked="sender === 'user'" value="user" @change="onSenderChange">辅助账号</label>
+      <span class="identity-label">用谁发送</span>
+      <label class="identity-option"><input type="radio" :checked="sender === 'bot'" value="bot" @change="onSenderChange">机器人</label>
+      <label class="identity-option"><input type="radio" :checked="sender === 'user'" value="user" @change="onSenderChange">Telegram 账号</label>
     </div>
     <label v-if="sender === 'bot'" class="identity-option text-xs text-slate-600">
-      <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">Bot 发送失败时改用辅助账号继续发送
+      <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">机器人发送失败时，改用 Telegram 账号
     </label>
     <label v-if="showHashOption" class="identity-option text-xs text-slate-600">
-      <input type="checkbox" :checked="hashChecked" @change="onHashChange">重置图片/视频指纹
+      <input type="checkbox" :checked="hashChecked" @change="onHashChange">微调图片和视频文件（不改变画面）
     </label>
   </div>`,
 };
@@ -221,9 +221,9 @@ const LogPanel = {
   template: `<app-card>
     <div class="panel-heading">
       <div>
-        <div class="panel-kicker">运行记录</div>
+
         <h2 class="panel-title">{{ title }}</h2>
-        <p class="panel-description">{{ description }}</p>
+
       </div>
       <div class="log-actions">
         <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">导出</button>

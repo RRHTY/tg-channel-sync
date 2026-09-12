@@ -23,7 +23,6 @@
             <span class="brand-mark" aria-hidden="true">杏</span>
             <div>
                 <h1 class="brand-title">杏铃同步台</h1>
-                <p class="brand-subtitle">Telegram Sync Console</p>
             </div>
         </div>
         <div class="header-actions">
@@ -99,13 +98,13 @@
     <settings-panel v-else :config="configForm" :saving="configSaving" :user-auth="userAuth" :auth-submitting="authSubmitting" :send-code-cooldown="sendCodeCooldown" @preview-theme="applyTheme" @save-config="saveSettingsPage" @save-restart="saveAndRestart" @send-code="sendUserCode" @verify-code="verifyUserCode" @submit-password="submitUserPassword" @cancel-auth="cancelUserAuth" @switch-account="switchUserAccount"></settings-panel>
 
     <footer class="app-footer">
-        <span>杏铃同步台 · Telegram 频道同步、迁移与重传</span>
+        <span>杏铃同步台</span>
         <span>{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
-<script src="/static/ui-components.js?v=4"></script>
+<script src="/static/ui-components.js?v=5"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js?v=4"></script>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app-methods.js?v=5"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>
