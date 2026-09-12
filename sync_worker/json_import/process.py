@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-import json
 import os
 import re
 
@@ -12,6 +11,7 @@ from pyrogram.enums import ParseMode
 import bot_engine
 import database as db
 from app_config import get_config
+from services.sync_validation import load_json_export
 from services.sync_services import (
     MESSAGE_LINK_RE,
     SAVED_MESSAGES_TARGET_ID,
@@ -635,19 +635,11 @@ async def process_json_sync(
     outcome: SyncResult | None = None,
 ):
     outcome = outcome if outcome is not None else SyncResult()
-    if not json_path or not os.path.exists(json_path):
-        raise JsonSyncFatalError(f"JSON 文件不存在或路径无效: {json_path or ''}")
-
     try:
-        with open(json_path, "r", encoding="utf-8") as file_obj:
-            data = json.load(file_obj)
-    except Exception as exc:
-        raise JsonSyncFatalError(f"JSON 解析失败: {exc}") from exc
+        data = await asyncio.to_thread(load_json_export, json_path)
+    except ValueError as exc:
+        raise JsonSyncFatalError(str(exc)) from exc
 
-    if not isinstance(data, dict) or not isinstance(data.get("messages"), list) or any(
-        not isinstance(message, dict) for message in data["messages"]
-    ):
-        raise JsonSyncFatalError("JSON 格式无效：需要包含 messages 数组的单个聊天导出文件")
 
     messages = data.get("messages", [])
     json_dir = os.path.dirname(os.path.abspath(json_path))

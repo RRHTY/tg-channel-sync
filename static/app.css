@@ -90,6 +90,9 @@
     --log-border: #333a68;
 }
 * { box-sizing: border-box; }
+.field-hint { margin: 0; color: #64748b; font-size: 12px; line-height: 1.65; }
+.inline-warning { padding: 10px 12px; border: 1px solid #f3dc9e; border-radius: 12px; background: #fffbeb; color: #854d0e; font-size: 12px; line-height: 1.6; }
+.text-action { padding: 0 3px; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .compact-details { border-top: 1px solid var(--line); padding-top: 12px; }
 .compact-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink); padding: 4px 0; }
 .compact-details summary span { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 12px; }

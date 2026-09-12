@@ -13,10 +13,10 @@ class StartSyncGuardTests(unittest.IsolatedAsyncioTestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.dict(main.sync_state, {"is_syncing": False, "stop_requested": False, "starting": False}))
-        engine = SimpleNamespace(aiogram_bot=object(), pyro_user_app=object())
+        engine = SimpleNamespace(aiogram_bot=object(), pyro_user_app=SimpleNamespace(is_initialized=True))
         self.stack.enter_context(patch.object(main, "_get_loaded_or_patched_bot_engine", return_value=engine))
         self.stack.enter_context(patch.object(main.db, "add_sys_log", AsyncMock()))
-        self.resolve = self.stack.enter_context(patch.object(main, "resolve_chat_id", AsyncMock(return_value=-100123)))
+        self.resolve = self.stack.enter_context(patch.object(main, "resolve_chat_id", AsyncMock(side_effect=lambda bot, ref: ref)))
         self.worker = AsyncMock()
         self.stack.enter_context(patch.object(main, "_ensure_process_master_sync_loaded", AsyncMock(return_value=self.worker)))
 
@@ -29,10 +29,10 @@ class StartSyncGuardTests(unittest.IsolatedAsyncioTestCase):
     async def test_two_concurrent_requests_accept_only_one(self):
         entered, release = asyncio.Event(), asyncio.Event()
 
-        async def resolve(*_):
+        async def resolve(bot, ref):
             entered.set()
             await release.wait()
-            return -100123
+            return ref
 
         self.resolve.side_effect = resolve
         backgrounds = [BackgroundTasks(), BackgroundTasks()]
@@ -54,7 +54,7 @@ class StartSyncGuardTests(unittest.IsolatedAsyncioTestCase):
         self.resolve.side_effect = ValueError("bad channel")
         self.assertEqual((await self.start(BackgroundTasks()))["status"], "error")
         self.assertFalse(main.sync_state["is_syncing"])
-        self.resolve.side_effect = None
+        self.resolve.side_effect = lambda bot, ref: ref
         self.assertEqual((await self.start(BackgroundTasks()))["status"], "success")
 
     async def test_cancelled_validation_releases_reservation(self):
@@ -81,6 +81,16 @@ class StartSyncGuardTests(unittest.IsolatedAsyncioTestCase):
         self.worker.assert_not_awaited()
         self.assertFalse(main.sync_state["is_syncing"])
         self.assertEqual(main.sync_state["result"]["status"], "stopped")
+
+    async def test_same_resolved_channel_does_not_queue_task(self):
+        self.resolve.side_effect = None
+        self.resolve.return_value = -100123
+        background = BackgroundTasks()
+        result = await self.start(background)
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('不能相同', result['message'])
+        self.assertEqual(background.tasks, [])
+        self.assertFalse(main.sync_state['is_syncing'])
 
     async def test_unexpected_worker_failure_releases_reservation(self):
         self.worker.side_effect = RuntimeError("worker failed")

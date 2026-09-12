@@ -22,6 +22,7 @@ from app_paths import ensure_runtime_dirs, static_dir, temp_dir
 from server_runtime import launch_browser_when_ready, resolve_server_config, reuse_existing_instance_or_exit, should_auto_open_browser
 from services.channel_mapping_sources import resolve_mapping_source
 from services.logging_config import configure_terminal_logging
+from services.sync_validation import load_json_export, validate_sync_request
 from services.sync_services import (
     SAVED_MESSAGES_TARGET_ID,
     format_channel_check_error,
@@ -836,6 +837,13 @@ async def start_sync(
     clone_fallback_to_user: str = Form("1"),
     target_type: str = Form("channel"),
 ):
+    json_media_group_window_seconds = getattr(json_media_group_window_seconds, "default", json_media_group_window_seconds)
+    try:
+        validate_sync_request(mode, sender, target_type, source_id, target_id, delay, start_id, end_id, json_media_group_window_seconds)
+        if mode == "json":
+            await asyncio.to_thread(load_json_export, json_path)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
     loaded_bot_engine = _get_loaded_or_patched_bot_engine()
     if loaded_bot_engine is None:
         if _bot_is_initializing():
@@ -852,16 +860,20 @@ async def start_sync(
         if user_app is None or not getattr(user_app, "is_initialized", False):
             return {"status": "error", "message": "收藏夹目标需要先完成辅助账号登录"}
         sender = "user"
-    if mode in ["api", "clone"] and not loaded_bot_engine.pyro_user_app:
+    user_ready = bool(getattr(getattr(loaded_bot_engine, "pyro_user_app", None), "is_initialized", False))
+    if mode in ["api", "clone"] and not user_ready:
         return {"status": "error", "message": "请先完成辅助账号登录"}
-    if mode == "json" and sender == "user" and not loaded_bot_engine.pyro_user_app:
+    if mode == "json" and sender == "user" and not user_ready:
         return {"status": "error", "message": "JSON 导入使用辅助账号发送前，请先完成辅助账号登录"}
 
     try:
+        resolved_source = None
         if mode in {"api", "clone"}:
-            await resolve_chat_id(loaded_bot_engine.aiogram_bot, source_id)
+            resolved_source = await resolve_chat_id(loaded_bot_engine.aiogram_bot, source_id)
         if not is_saved_target:
-            await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
+            resolved_target = await resolve_chat_id(loaded_bot_engine.aiogram_bot, target_id)
+            if resolved_source is not None and resolved_source == resolved_target:
+                return {"status": "error", "message": "源频道与目标频道不能相同"}
     except Exception as exc:
         message = format_channel_check_error(exc)
         await db.add_sys_log("WARNING", f"启动任务失败: {message}")
