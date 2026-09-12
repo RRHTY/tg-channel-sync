@@ -89,7 +89,7 @@
         : (this.configForm.telegram.extra_bot_tokens || "");
     },
     updateUserAuthLabel() {
-      const map = { idle: "未登录", awaiting_code: "等待验证码", awaiting_password: "等待两步验证", authorized: "已登录" };
+      const map = { initializing: "正在连接", idle: "未登录", awaiting_code: "等待验证码", awaiting_password: "等待两步验证", authorized: "已登录" };
       this.userAuth.status_label = map[this.userAuth.status] || this.userAuth.status || "未登录";
       this.sendCodeCooldown = Math.max(this.sendCodeCooldown || 0, this.userAuth.send_code_cooldown || 0);
     },
@@ -111,7 +111,11 @@
       this.configForm.app.theme = this.applyTheme(this.configForm.app.theme, true);
     },
     async loadUserAuthStatus() {
-      this.userAuth = api.ensureSuccess(await api.getJson("/api/user_auth/status"), "无法读取 Telegram 账号的登录状态");
+      const revision = this.userAuthRevision || 0;
+      const auth = api.ensureSuccess(await api.getJson("/api/user_auth/status"), "无法读取 Telegram 账号的登录状态");
+      // A live update received while fetching is newer than this snapshot.
+      if (revision !== (this.userAuthRevision || 0)) return;
+      this.userAuth = auth;
       this.sendCodeCooldown = this.userAuth.send_code_cooldown || 0;
       this.updateUserAuthLabel();
     },
@@ -230,6 +234,12 @@
           if (data.status.is_syncing) this.syncModeFromStatus(data.status);
         }
         if (data.app_info) this.appInfo = data.app_info;
+        if (data.user_auth) {
+          this.userAuthRevision = (this.userAuthRevision || 0) + 1;
+          this.userAuth = data.user_auth;
+          this.sendCodeCooldown = this.userAuth.send_code_cooldown || 0;
+          this.updateUserAuthLabel();
+        }
         if (data.sys_logs) this.sysLogs = mergeLogs(this.sysLogs, data.sys_logs);
         if (data.msg_logs) this.msgLogs = mergeLogs(this.msgLogs, data.msg_logs);
         this.$nextTick(() => this.scrollLogsToBottom({ sys: shouldFollowSys, msg: shouldFollowMsg }));

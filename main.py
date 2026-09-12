@@ -115,7 +115,7 @@ async def _ensure_process_master_sync_loaded():
 def _user_auth_status_before_engine_loaded():
     status = app_info_cache.get("user", {}).get("status") or STATUS_NOT_CONFIGURED
     return {
-        "status": status,
+        "status": "initializing" if status == STATUS_INITIALIZING else status,
         "awaiting_code": False,
         "awaiting_password": False,
         "phone_number": "",
@@ -369,7 +369,10 @@ async def get_user_auth_status():
     loaded_bot_engine = _get_loaded_bot_engine()
     if loaded_bot_engine is None:
         return _user_auth_status_before_engine_loaded()
-    return loaded_bot_engine.get_user_auth_status()
+    auth = loaded_bot_engine.get_user_auth_status()
+    if auth["status"] == "idle" and app_info_cache.get("user", {}).get("status") == STATUS_INITIALIZING:
+        return {**auth, "status": "initializing"}
+    return auth
 
 
 @app.post("/api/user_auth/send_code")
@@ -483,6 +486,7 @@ async def sse_stream(request: Request):
                         for row in reversed(new_msg)
                     ]
 
+                payload["user_auth"] = await get_user_auth_status()
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
