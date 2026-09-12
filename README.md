@@ -14,7 +14,7 @@
 
 | 首页 | 设置 |
 | :------: | :------: |
-| <img width="909" height="1368" alt="9ad40504818ef0db25a80992ff046bf3" src="https://github.com/user-attachments/assets/a166c8f4-da75-4ee5-bdb6-3941deb9ed6c" />| <img width="1250" height="2247" alt="391a9af42d8e1a2585397b1e824a8089" src="https://github.com/user-attachments/assets/b7ee5d3c-1d7b-40a8-925b-6332ab18ce6a" />|
+| <img width="1789" height="1539" alt="image" src="https://github.com/user-attachments/assets/47a43c9e-aa65-449e-b24b-1878234051ae" /> | <img width="1789" height="2385" alt="image" src="https://github.com/user-attachments/assets/b18e99f1-e5cb-4662-9a72-f789f1964399" /> |
 
 ---
 
