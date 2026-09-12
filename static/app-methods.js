@@ -333,6 +333,8 @@
 
   const syncMethods = {
     async startSync(form) {
+      if (this.syncStarting || this.syncStatus.is_syncing) return;
+      this.syncStarting = true;
       try {
         const payload = api.buildFormData(form, {
           valueTransform(value, key) {
@@ -340,9 +342,12 @@
           },
         });
         const res = api.ensureSuccess(await api.postForm("/api/start_sync", payload), "启动任务失败");
+        this.syncStatus = { ...this.syncStatus, is_syncing: true, starting: true };
         if (res.message) this.showToast(res.message);
       } catch (error) {
         this.handleApiError(error, "启动任务失败");
+      } finally {
+        this.syncStarting = false;
       }
     },
     async stopSync() {

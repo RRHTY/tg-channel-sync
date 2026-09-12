@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from functools import wraps
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, Form, Request
@@ -28,6 +29,7 @@ from services.sync_services import (
 )
 from services.version_service import GITHUB_REPO, get_local_version, get_remote_version_info, is_version_at_least
 from sync_worker.runtime import sync_state
+from sync_worker.runtime.result import SyncResult
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -742,7 +744,43 @@ async def stop_sync():
     return {"status": "error", "message": "当前没有运行中的任务"}
 
 
+def _reserve_history_start(func):
+    @wraps(func)
+    async def guarded(*args, **kwargs):
+        # No await between checking and claiming: atomic on the server's event loop.
+        if sync_state["is_syncing"]:
+            return {"status": "error", "message": "任务正在启动或运行中"}
+        sync_state.update(is_syncing=True, starting=True, stop_requested=False)
+        accepted = False
+        try:
+            response = await func(*args, **kwargs)
+            accepted = response.get("status") == "success"
+            return response
+        finally:
+            if not accepted:
+                sync_state.update(is_syncing=False, starting=False, stop_requested=False)
+    return guarded
+
+
+async def _run_reserved_sync(sync_func, *args):
+    try:
+        if sync_state.get("stop_requested"):
+            sync_state["result"] = SyncResult().snapshot(stopped=True)
+            return
+        sync_state["starting"] = False
+        await sync_func(*args)
+    except asyncio.CancelledError:
+        sync_state["result"] = SyncResult().snapshot(stopped=True)
+        raise
+    except Exception as exc:
+        sync_state["result"] = SyncResult().snapshot(error=str(exc) or type(exc).__name__)
+        raise
+    finally:
+        sync_state.update(is_syncing=False, starting=False, stop_requested=False)
+
+
 @app.post("/api/start_sync")
+@_reserve_history_start
 async def start_sync(
     background_tasks: BackgroundTasks,
     mode: str = Form(...),
@@ -760,8 +798,6 @@ async def start_sync(
     clone_fallback_to_user: str = Form("1"),
     target_type: str = Form("channel"),
 ):
-    if sync_state["is_syncing"]:
-        return {"status": "error", "message": "任务正在运行中"}
     loaded_bot_engine = _get_loaded_or_patched_bot_engine()
     if loaded_bot_engine is None:
         if _bot_is_initializing():
@@ -801,6 +837,7 @@ async def start_sync(
 
     sync_func = await _ensure_process_master_sync_loaded()
     background_tasks.add_task(
+        _run_reserved_sync,
         sync_func,
         mode,
         sender,
