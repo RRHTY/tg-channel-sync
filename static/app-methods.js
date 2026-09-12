@@ -5,6 +5,13 @@
     if (!value || !['api', 'json', 'clone'].includes(value.mode)) return null;
     return Object.fromEntries(syncParamKeys.filter(key => typeof value[key] === 'string' || (typeof value[key] === 'number' && Number.isFinite(value[key]))).map(key => [key, value[key]]));
   }
+  function mergeLogs(...groups) {
+    const unique = [...new Map(groups.flat().map(item => [item.id, item])).values()];
+    const server = unique.filter(item => typeof item.id === 'number').sort((a, b) => a.id - b.id);
+    // Local notices have no server sequence; keep a small separate tail.
+    const local = unique.filter(item => typeof item.id !== 'number').slice(-20);
+    return [...server, ...local].slice(-100);
+  }
 
   const uiMethods = {
     syncModeFromStatus(status) {
@@ -31,6 +38,7 @@
       if (this.syncStatus?.is_syncing) this.syncModeFromStatus(this.syncStatus);
       this.currentView = this.setupStatus.needs_setup ? "setup" : "home";
       this.loadLastSyncParams();
+      this.bootstrapReady = true;
     },
     navButtonClass(view) {
       return this.currentView === view ? "nav-active" : "nav-idle";
@@ -179,33 +187,76 @@
       if (msg && msgPanel) msgPanel.scrollTop = msgPanel.scrollHeight;
     },
     setupSSE() {
-      this.sseConnection = new EventSource("/api/stream");
-      this.sseConnection.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+      this.serverAction = "";
+      if (this.sseConnection) this.sseConnection.close();
+      this.connectionState = "connecting";
+      const source = new EventSource("/api/stream");
+      this.sseConnection = source;
+      let lastEventAt = Date.now();
+      source.onerror = () => {
+        if (this.sseConnection === source) this.connectionState = "reconnecting";
+      };
+      source.onopen = async () => {
+        if (this.sseConnection !== source) return;
+        this.connectionState = "connecting";
+        try {
+          if (!this.bootstrapReady) await this.bootstrap();
+          else await Promise.all([this.loadSystemLogs(), this.loadMessageLogs(), this.loadUserAuthStatus()]);
+        } catch (error) {
+          if (this.sseConnection !== source) return;
+          this.connectionState = "reconnecting";
+          source.close();
+          this.handleApiError(error, "重连后加载页面数据失败");
+        }
+      };
+      source.onmessage = (event) => {
+        if (this.sseConnection !== source) return;
+        let data;
+        try {
+          data = JSON.parse(event.data);
+          if (!data || typeof data !== "object") throw new Error("Invalid event");
+        }
+        catch (_) { this.connectionState = "reconnecting"; source.close(); return; }
+        lastEventAt = Date.now();
         const sysPanel = document.getElementById("sys-log-panel");
         const msgPanel = document.getElementById("msg-log-panel");
         const shouldFollowSys = this.isPanelNearBottom(sysPanel);
         const shouldFollowMsg = this.isPanelNearBottom(msgPanel);
         if (data.status) {
+          this.lastStatusAt = Date.now();
+          if (this.bootstrapReady) this.connectionState = "connected";
           if (this.stopping && !data.status.is_syncing) this.stopping = false;
           this.syncStatus = data.status;
           if (data.status.is_syncing) this.syncModeFromStatus(data.status);
         }
         if (data.app_info) this.appInfo = data.app_info;
-        if (data.sys_logs) this.sysLogs = [...this.sysLogs, ...data.sys_logs].slice(-100);
-        if (data.msg_logs) this.msgLogs = [...this.msgLogs, ...data.msg_logs].slice(-100);
+        if (data.sys_logs) this.sysLogs = mergeLogs(this.sysLogs, data.sys_logs);
+        if (data.msg_logs) this.msgLogs = mergeLogs(this.msgLogs, data.msg_logs);
         this.$nextTick(() => this.scrollLogsToBottom({ sys: shouldFollowSys, msg: shouldFollowMsg }));
       };
+      if (this.connectionTimer) clearInterval(this.connectionTimer);
+      this.connectionTimer = setInterval(() => {
+        if (this.serverAction || this.sseConnection !== source) return;
+        if (source.readyState === 2 || Date.now() - lastEventAt > 15000) this.setupSSE();
+      }, 5000);
     },
     async fetchAppInfo() {
       this.appInfo = api.ensureSuccess(await api.getJson("/api/app_info"), "加载应用状态失败");
     },
     async loadSystemLogs() {
-      this.sysLogs = api.ensureSuccess(await api.getJson("/api/logs/system"), "加载系统日志失败");
+      const request = this.sysLogRequest = (this.sysLogRequest || 0) + 1;
+      const before = new Set(this.sysLogs.map(item => item.id));
+      const rows = api.ensureSuccess(await api.getJson("/api/logs/system"), "加载系统日志失败");
+      if (request !== this.sysLogRequest) return;
+      this.sysLogs = mergeLogs(rows, this.sysLogs.filter(item => !before.has(item.id)));
       this.$nextTick(() => this.scrollLogsToBottom({ sys: true, msg: false }));
     },
     async loadMessageLogs() {
-      this.msgLogs = api.ensureSuccess(await api.getJson("/api/logs/message"), "加载消息日志失败");
+      const request = this.msgLogRequest = (this.msgLogRequest || 0) + 1;
+      const before = new Set(this.msgLogs.map(item => item.id));
+      const rows = api.ensureSuccess(await api.getJson("/api/logs/message"), "加载消息日志失败");
+      if (request !== this.msgLogRequest) return;
+      this.msgLogs = mergeLogs(rows, this.msgLogs.filter(item => !before.has(item.id)));
       this.$nextTick(() => this.scrollLogsToBottom({ sys: false, msg: true }));
     },
     exportSystemLogs() {
@@ -219,6 +270,7 @@
       try {
         const res = api.ensureSuccess(await api.deleteJson("/api/logs/system"), "清理系统日志失败");
         this.sysLogs = [];
+        this.sysLogRequest = (this.sysLogRequest || 0) + 1;
         this.showToast(res.message);
         this.$nextTick(() => this.scrollLogsToBottom());
       } catch (error) {
@@ -230,6 +282,7 @@
       try {
         const res = api.ensureSuccess(await api.deleteJson("/api/logs/message"), "清理消息日志失败");
         this.msgLogs = [];
+        this.msgLogRequest = (this.msgLogRequest || 0) + 1;
         this.showToast(res.message);
         this.$nextTick(() => this.scrollLogsToBottom());
       } catch (error) {
@@ -244,6 +297,8 @@
         const res = api.ensureSuccess(await api.postJson("/api/server/restart", {}), "重启服务失败");
         this.showToast(res.message);
         if (this.sseConnection) this.sseConnection.close();
+        this.connectionState = "reconnecting";
+        this.sseConnection = null;
         this.waitForServerReady();
       } catch (error) {
         this.serverAction = "";
@@ -258,6 +313,8 @@
         const res = api.ensureSuccess(await api.postJson("/api/server/stop", {}), "关闭服务失败");
         this.showToast(res.message);
         if (this.sseConnection) this.sseConnection.close();
+        this.connectionState = "offline";
+        this.sseConnection = null;
       } catch (error) {
         this.serverAction = "";
         this.handleApiError(error, "关闭服务失败");
@@ -374,6 +431,7 @@
       try { localStorage.removeItem('tgcs-last-sync-v1'); } catch (_) {}
     },
     async startSync(form) {
+      if (this.connectionState !== "connected") return this.showToast("连接尚未恢复，请等待状态更新后再启动");
       if (this.syncStarting || this.syncStatus.is_syncing) return;
       this.syncStarting = true;
       try {
@@ -394,6 +452,7 @@
       }
     },
     async stopSync() {
+      if (this.connectionState !== "connected") return this.showToast("当前连接已中断，无法确认任务状态，请先恢复连接");
       this.stopping = true;
       try {
         api.ensureSuccess(await api.postJson("/api/stop_sync", {}), "中断任务失败");

@@ -121,7 +121,7 @@ const ChannelMapping = {
 };
 const SyncPanel = {
   components:{ FieldGroup, SenderIdentityOptions },
-  props:["status","form","stopping","starting","userAuth","hasLastParams"],
+  props:["status","form","stopping","starting","userAuth","hasLastParams","connected"],
   computed:{
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; },
@@ -147,7 +147,7 @@ const SyncPanel = {
         <label class="choice-card"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0"><span><span class="choice-title">强制发送</span><span class="choice-description">忽略重复和断点记录，可能产生重复消息</span></span></label>
       </div></details>
     </fieldset>
-    <button v-if="!status.is_syncing" type="button" :disabled="starting" @click="$emit('start', form)" class="btn-primary mt-4">{{ starting ? '启动中…' : '启动任务' }}</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">中断中<span class="dot-anim"></span></button><button v-else type="button" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">中断任务</button>
+    <button v-if="!status.is_syncing" type="button" :disabled="starting || !connected" @click="$emit('start', form)" class="btn-primary mt-4">{{ starting ? '启动中…' : (!connected ? '等待连接恢复' : '启动任务') }}</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">中断中<span class="dot-anim"></span></button><button v-else type="button" :disabled="!connected" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">中断任务</button>
   </div>`
 };
 
@@ -550,21 +550,22 @@ const SettingsPanel = {
 
 createApp({
   components:{ SetupWizard, StatusOverview, ChannelMapping, SyncPanel, LogViewer, SettingsPanel, GlobalFilters, ToastBanner },
-  data(){ return { syncStarting:false, lastSyncParams:null, currentView:"home", appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false, theme:"clover" } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuth:{ status:"idle", status_label:"未登录", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
+  data(){ return { syncStarting:false, bootstrapReady:false, connectionState:"connecting", lastStatusAt:0, connectionTimer:null, lastSyncParams:null, currentView:"home", appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false, theme:"clover" } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuth:{ status:"idle", status_label:"未登录", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
   async mounted(){
     this.startSendCodeTimer();
     try {
       await this.bootstrap();
-      this.setupSSE();
     } catch(error) {
       this.showAppError(window.TgcsApi.getErrorMessage(error, "页面初始化失败"));
     }
+    this.setupSSE();
     this.loadVersionInfo();
   },
   beforeUnmount(){
     if(this.sendCodeTimer) clearInterval(this.sendCodeTimer);
     if(this.restartPolling) clearInterval(this.restartPolling);
     if(this.noticeTimer) clearTimeout(this.noticeTimer);
+    if(this.connectionTimer) clearInterval(this.connectionTimer);
     if(this.sseConnection) this.sseConnection.close();
   },
   methods: window.TgcsAppMethods

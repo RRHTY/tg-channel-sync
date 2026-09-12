@@ -68,6 +68,10 @@
     </header>
 
     <toast-banner :notice="notice"></toast-banner>
+    <div v-if="connectionState !== 'connected'" class="connection-banner" role="status">
+        <span>{{ connectionState === 'offline' ? '服务已关闭，页面状态已停止更新。' : (connectionState === 'connecting' ? '正在连接并更新状态…' : '连接中断，正在自动重连；任务可能仍在后台运行。') }}<small v-if="lastStatusAt">上次更新 {{ new Date(lastStatusAt).toLocaleTimeString('zh-CN', {hour12:false}) }}</small></span>
+        <button type="button" class="text-action" @click="setupSSE">重新连接</button>
+    </div>
 
     <setup-wizard v-if="currentView === 'setup'" :config="configForm" :saving="configSaving" @save="saveSetup"></setup-wizard>
 
@@ -75,7 +79,7 @@
         <status-overview :app-info="appInfo" :status="syncStatus" @open-settings="openSettings"></status-overview>
         <div class="console-layout">
             <div class="console-main">
-                <sync-panel :has-last-params="!!lastSyncParams" @restore="restoreLastSyncParams" @forget="clearLastSyncParams" :user-auth="userAuth" @open-settings="openSettings" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
+                <sync-panel :connected="connectionState === 'connected'" :has-last-params="!!lastSyncParams" @restore="restoreLastSyncParams" @forget="clearLastSyncParams" :user-auth="userAuth" @open-settings="openSettings" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
                 <log-viewer
                     :sys-logs="sysLogs"
                     :msg-logs="msgLogs"
@@ -96,7 +100,7 @@
 
     <footer class="app-footer">
         <span>杏铃同步台 · Telegram 频道同步、迁移与重传</span>
-        <span>v{{ versionInfo.current_version || 'unknown' }}</span>
+        <span>{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
 <script src="/static/ui-components.js?v=4"></script>
