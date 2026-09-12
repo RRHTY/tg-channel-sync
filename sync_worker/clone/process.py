@@ -278,7 +278,9 @@ async def _send_api_media(
 
 
 def _api_group_captions(rewritten_captions):
-    return [normalize_pyro_html(caption_html or "") for caption_html in rewritten_captions]
+    # Pyrofork treats '' as "reuse original". A space is truthy at its
+    # selection boundary and is stripped to an empty caption by its parser.
+    return [normalize_pyro_html(caption_html or "") or " " for caption_html in rewritten_captions]
 
 
 async def _fetch_last_message_id(app, source_id):

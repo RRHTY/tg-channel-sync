@@ -1,5 +1,10 @@
 ﻿import asyncio
 import importlib
+import multiprocessing
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
 import json
 import shutil
 import signal
@@ -23,6 +28,7 @@ from server_runtime import launch_browser_when_ready, resolve_server_config, reu
 from services.channel_mapping_sources import resolve_mapping_source
 from services.logging_config import configure_terminal_logging
 from services.sync_validation import load_json_export, validate_sync_request
+from services.filter_rules import preview_filter_rule
 from services.sync_services import (
     SAVED_MESSAGES_TARGET_ID,
     format_channel_check_error,
@@ -732,9 +738,30 @@ async def add_filter_rule(
     replacement: str = Form(""),
     is_case_sensitive: int = Form(0),
 ):
-    await db.add_filter_rule(rule_type, pattern, replacement, is_case_sensitive)
+    try:
+        await db.add_filter_rule(rule_type, pattern, replacement, is_case_sensitive)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
     await db.add_sys_log("INFO", f"添加过滤规则 [{rule_type}]: {pattern}")
     return {"status": "success", "message": "过滤规则添加成功"}
+
+
+class FilterPreview(BaseModel):
+    rule_type: str = Field(max_length=20)
+    pattern: str = Field(max_length=1000)
+    replacement: str = Field(default="", max_length=1000)
+    is_case_sensitive: int = 0
+    text: str = Field(default="", max_length=4000)
+    file_name: str = Field(default="", max_length=255)
+
+
+@app.post("/api/filter_rules/preview")
+async def preview_filter(payload: FilterPreview):
+    try:
+        result = await asyncio.to_thread(preview_filter_rule, payload.rule_type, payload.pattern, payload.replacement, payload.is_case_sensitive, payload.text, payload.file_name)
+        return {"status": "success", **result}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
 
 
 @app.delete("/api/filter_rules/{rule_id}")

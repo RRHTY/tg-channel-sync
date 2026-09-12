@@ -4,6 +4,7 @@ from pyrogram.enums import ParseMode
 from pyrogram.types import InputMediaAudio, InputMediaDocument, InputMediaPhoto, InputMediaVideo
 
 import bot_engine
+import database as db
 from services.sync_services import build_link_rewrite_context, rewrite_message_links
 
 from .text import prepend_source_header_html
@@ -41,6 +42,9 @@ async def rewrite_media_group_captions(source_id, target_id, group, source_usern
     for index, item in enumerate(group):
         # 获取原始 caption
         raw_caption = item.caption.html if item.caption else ""
+        _, filtered_caption = await db.apply_message_filters(raw_caption, True, "")
+        if filtered_caption != raw_caption:
+            changed = True
         
         # 决定是否在当前媒体上添加外部来源前缀
         # 规则：有文字的在文字上加（第一个有文字的），没有文字的在第一个媒体上加
@@ -48,7 +52,7 @@ async def rewrite_media_group_captions(source_id, target_id, group, source_usern
             (should_add_to_first and index == 0) or  # 没有任何文字时，在第一个媒体上加
             (not should_add_to_first and index == first_caption_index)  # 有文字时，在第一个有文字的媒体上加
         )
-        caption_with_header = prepend_source_header_html(raw_caption, item, enabled=should_add_header)
+        caption_with_header = prepend_source_header_html(filtered_caption, item, enabled=should_add_header)
         
         # 如果添加了前缀，标记为已改变
         if caption_with_header != raw_caption:

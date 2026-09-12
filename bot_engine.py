@@ -786,10 +786,14 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
 
     include_external_source_header = _realtime_sync_options(target_mappings[0])["include_external_source_header"]
 
+    filtered_captions = {}
+    captions_changed = False
     for item in group:
         text_html = item.html_text if item.text or item.caption else ""
         file_name = item.document.file_name if item.document else (item.video.file_name if item.video else "")
-        should_skip, _ = await db.apply_message_filters(text_html, True, file_name or "")
+        should_skip, filtered_text = await db.apply_message_filters(text_html, True, file_name or "")
+        filtered_captions[item.message_id] = filtered_text
+        captions_changed = captions_changed or filtered_text != text_html
         if should_skip:
             await db.add_msg_log("DROP_REGEX", f"[{chat_name}] 媒体组消息ID:{[m.message_id for m in group]} | 已被正则过滤拦截")
             return
@@ -809,7 +813,7 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
                 captions = []
                 link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
                 for item in group:
-                    item_text = item.html_text if item.text or item.caption else ""
+                    item_text = filtered_captions[item.message_id]
                     if include_external_source_header:
                         item_text = prepend_source_header_html(item_text, item, enabled=True)
                     item_text, _ = await rewrite_message_links(item_text, source_id, link_context)
@@ -830,16 +834,16 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
                 await db.add_msg_log("SEND_GROUP", f"源频道:{source_id} | 目标频道:{target_id} | 媒体组消息ID:{msg_ids} | 重传成功")
                 continue
             # 如果启用外部来源前缀，需要逐条复制并添加前缀
-            if include_external_source_header:
-                await db.add_msg_log("WARN", f"目标频道:{target_id} | 媒体组启用外部来源前缀，使用逐条复制模式")
+            if include_external_source_header or captions_changed:
+                await db.add_msg_log("WARN", f"目标频道:{target_id} | 媒体组说明需改写，使用逐条复制模式")
                 for item in group:
                     try:
-                        item_text = item.html_text if item.text or item.caption else ""
+                        item_text = filtered_captions[item.message_id]
                         # 添加外部来源前缀
-                        prefixed_text = prepend_source_header_html(item_text, item, enabled=True)
+                        prefixed_text = prepend_source_header_html(item_text, item, enabled=include_external_source_header)
 
                         kwargs = {"chat_id": target_id, "from_chat_id": source_id, "message_id": item.message_id}
-                        if prefixed_text != item_text:
+                        if prefixed_text != (item.html_text if item.text or item.caption else ""):
                             kwargs["caption"] = prefixed_text
                             kwargs["parse_mode"] = "HTML"
                         if reply_to_id:
@@ -883,13 +887,13 @@ async def _process_realtime_media_group(cache_key, source_id, target_mappings, c
             await db.add_msg_log("WARN", f"目标频道:{target_id} | 媒体组整组复制失败，已改为逐条复制: {exc}")
             for item in group:
                 try:
-                    item_text = item.html_text if item.text or item.caption else ""
+                    item_text = filtered_captions[item.message_id]
                     # 如果启用外部来源前缀，添加前缀
                     if include_external_source_header:
                         item_text = prepend_source_header_html(item_text, item, enabled=True)
 
                     kwargs = {"chat_id": target_id, "from_chat_id": source_id, "message_id": item.message_id}
-                    if include_external_source_header and item_text != (item.html_text if item.text or item.caption else ""):
+                    if item_text != (item.html_text if item.text or item.caption else ""):
                         kwargs["caption"] = item_text
                         kwargs["parse_mode"] = "HTML"
                     if reply_to_id:

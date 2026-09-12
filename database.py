@@ -9,6 +9,11 @@ import aiosqlite
 
 from app_config import get_config
 from app_paths import database_file, ensure_runtime_dirs
+from services.filter_rules import (
+    validate_filter_rule,
+    compile_filter_regex as _compile_filter_regex,
+    apply_filter_rule as _apply_filter_rule,
+)
 
 
 DB_FILE = str(database_file())
@@ -633,6 +638,7 @@ async def update_settings(settings: dict):
 
 
 async def add_filter_rule(rule_type: str, pattern: str, replacement: str = "", is_case_sensitive: int = 0):
+    validate_filter_rule(rule_type, pattern, replacement, is_case_sensitive)
     await _execute(
         "INSERT INTO filter_rules (rule_type, pattern, replacement, is_case_sensitive) VALUES (?, ?, ?, ?)",
         (rule_type, pattern, replacement, is_case_sensitive),
@@ -648,21 +654,6 @@ async def delete_filter_rule(rule_id: int):
     await _execute("DELETE FROM filter_rules WHERE id = ?", (rule_id,), commit=True)
 
 
-def _compile_filter_regex(pattern: str, is_case_sensitive: int):
-    flags = 0 if is_case_sensitive else re.IGNORECASE
-    return re.compile(pattern, flags)
-
-
-def _filter_rule_should_drop(regex, text: str, file_name: str) -> bool:
-    return bool(regex.search(text) or (file_name and regex.search(file_name)))
-
-
-def _apply_filter_rule(rule_type: str, regex, replacement: str, text: str, file_name: str) -> tuple[bool, str]:
-    if rule_type in ["drop", "skip_media"]:
-        return _filter_rule_should_drop(regex, text, file_name), text
-    if rule_type in ["replace", "replace_text"] and text:
-        return False, regex.sub(replacement or "", text)
-    return False, text
 
 
 async def apply_message_filters(text_html: str, has_media: bool, file_name: str) -> tuple[bool, str]:

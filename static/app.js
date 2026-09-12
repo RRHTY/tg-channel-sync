@@ -164,9 +164,56 @@ const LogViewer = {
 
 const GlobalFilters = {
   props:["settings","rules","newRule"],
-  data(){ return { typeLabels:{ sync_text:"文本", sync_photo:"图片", sync_video:"视频", sync_document:"文件", sync_audio:"音频", sync_voice:"语音", sync_sticker:"贴纸", sync_gif:"动图" } }; },
+  data(){ return { previewText:"", previewFile:"", previewResult:null, previewBusy:false, previewVersion:0, typeLabels:{ sync_text:"文本", sync_photo:"图片", sync_video:"视频", sync_document:"文件", sync_audio:"音频", sync_voice:"语音", sync_sticker:"贴纸", sync_gif:"动图" } }; },
   computed:{ ruleCount(){ return (this.rules || []).length; } },
-  template:`<div class="space-y-4"><div class="card"><div class="panel-heading"><div><div class="panel-kicker">Content</div><h2 class="panel-title">类型过滤</h2></div></div><div class="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4"><label v-for="(label, key) in typeLabels" class="choice-card !p-2"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0"><span class="choice-title">{{ label }}</span></label></div><button @click="$emit('save-settings', settings)" class="btn-secondary">保存类型</button></div><div class="card"><div class="panel-heading"><div><div class="panel-kicker">Rules</div><h2 class="panel-title">正则过滤</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div><div class="filter-form mb-4"><select v-model="newRule.rule_type" aria-label="规则类型" class="input-box bg-white"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select><input v-model="newRule.pattern" type="text" aria-label="正则表达式" placeholder="正则表达式" class="input-box font-mono"><input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" type="text" aria-label="替换内容" placeholder="替换为；留空则删除" class="input-box"><label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0">区分大小写</label><button @click="$emit('add-rule', newRule)" class="btn-primary">添加规则</button></div><ul class="rule-scroll space-y-2 text-sm border-t border-slate-100 pt-4"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><span class="min-w-0 truncate font-mono text-xs">{{ rule.pattern }} <span v-if="rule.rule_type === 'replace'" class="text-emerald-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul></div></div>`
+  watch:{
+    newRule:{ deep:true, handler(){ this.invalidatePreview(); } },
+    previewText(){ this.invalidatePreview(); },
+    previewFile(){ this.invalidatePreview(); }
+  },
+  methods:{
+    invalidatePreview(){ this.previewVersion++; this.previewResult = null; },
+    async preview(){
+      const version = this.previewVersion;
+      this.previewBusy = true;
+      try {
+        const api = window.TgcsApi;
+        const result = api.ensureSuccess(await api.postJson("/api/filter_rules/preview", { ...this.newRule, text:this.previewText, file_name:this.previewFile }), "预览失败");
+        if (version === this.previewVersion) this.previewResult = result;
+      } catch(error) {
+        if (version === this.previewVersion) this.previewResult = {error:window.TgcsApi.getErrorMessage(error, "预览失败")};
+      } finally { this.previewBusy = false; }
+    }
+  },
+  template:`<div class="space-y-4">
+    <div class="card">
+      <div class="panel-heading"><div><div class="panel-kicker">Content</div><h2 class="panel-title">类型过滤</h2></div></div>
+      <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4"><label v-for="(label, key) in typeLabels" :key="key" class="choice-card !p-2"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0"><span class="choice-title">{{ label }}</span></label></div>
+      <button @click="$emit('save-settings', settings)" class="btn-secondary">保存类型</button>
+    </div>
+    <div class="card">
+      <div class="panel-heading"><div><div class="panel-kicker">Rules</div><h2 class="panel-title">正则过滤</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div>
+      <p class="field-hint mb-3">按添加顺序生效；屏蔽匹配文本或文件名，媒体组任一项命中则整组跳过。</p>
+      <div class="filter-form mb-4">
+        <select v-model="newRule.rule_type" aria-label="规则类型" class="input-box"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select>
+        <input v-model="newRule.pattern" maxlength="1000" type="text" aria-label="正则表达式" placeholder="例如：广告|推广" class="input-box font-mono">
+        <input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" maxlength="1000" type="text" aria-label="替换内容" placeholder="替换为；留空则删除" class="input-box">
+        <label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0">区分大小写</label>
+        <button @click="$emit('add-rule', newRule)" :disabled="!newRule.pattern" class="btn-primary">添加规则</button>
+      </div>
+      <details class="compact-details mb-4"><summary>测试当前规则（不保存）</summary><div class="form-surface">
+        <p class="field-hint">仅测试上方草稿，使用与同步相同的 Python 正则。实际输入包含 HTML 标签；结果仅显示文本，不执行 HTML。</p>
+        <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="预览文本" placeholder="粘贴一段示例文本…" class="input-box"></textarea>
+        <input v-model="previewFile" maxlength="255" aria-label="预览文件名" placeholder="文件名（可选，例如 video.mp4）" class="input-box">
+        <button type="button" @click="preview" :disabled="previewBusy || !newRule.pattern" class="btn-secondary">{{ previewBusy ? '预览中…' : '预览效果' }}</button>
+        <div v-if="previewResult" class="preview-result" role="status">
+          <p v-if="previewResult.error" class="text-red-600">{{ previewResult.error }}</p>
+          <template v-else><p>{{ previewResult.dropped ? '命中：将屏蔽此消息（媒体组会整组跳过）' : (previewResult.matched ? '命中：替换后内容' : '未命中：内容保持不变') }}</p><pre v-if="!previewResult.dropped">{{ previewResult.text || '（空文本）' }}</pre></template>
+        </div>
+      </div></details>
+      <ul class="rule-scroll space-y-2 text-sm border-t border-slate-100 pt-4"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><span class="min-w-0 break-all font-mono text-xs"><span class="field-hint">{{ ['drop','skip_media'].includes(rule.rule_type) ? '屏蔽' : '替换' }}</span> {{ rule.pattern }} <span v-if="['replace','replace_text'].includes(rule.rule_type)" class="text-emerald-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul>
+    </div>
+  </div>`
 };
 const UserAuthPanel = {
   props:["auth","submitting","cooldown"],

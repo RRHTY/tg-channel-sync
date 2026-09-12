@@ -65,7 +65,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_apply_message_filters_skips_invalid_regex_and_continues(self):
         await database.init_db()
-        await database.add_filter_rule("drop", "[")
+        with self.assertRaises(ValueError):
+            await database.add_filter_rule("drop", "[")
+        # Legacy invalid rows remain readable; new writes are rejected.
+        await database._execute("INSERT INTO filter_rules (rule_type, pattern, replacement, is_case_sensitive) VALUES ('drop', '[', '', 0)", commit=True)
         await database.add_filter_rule("replace", "hello", "hi")
 
         should_skip, text = await database.apply_message_filters("hello", False, "")

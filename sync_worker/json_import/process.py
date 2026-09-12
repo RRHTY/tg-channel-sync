@@ -12,6 +12,7 @@ import bot_engine
 import database as db
 from app_config import get_config
 from services.sync_validation import load_json_export
+from sync_worker.core.text import prepend_source_header_html
 from services.sync_services import (
     MESSAGE_LINK_RE,
     SAVED_MESSAGES_TARGET_ID,
@@ -438,6 +439,7 @@ async def _prepare_json_media_group(group, json_dir, source_scope_id, link_conte
         if not media_path or not os.path.exists(media_path):
             await db.add_msg_log("JSON_MEDIA_MISSING", f"消息ID:{item_id} | 媒体组文件不存在，已改为逐条发送")
             return None
+        original_file_name = os.path.basename(media_path)
         media_path, created_temp = await _prepare_json_media_path(media_path, media_type, item_id, hash_perturb)
         if created_temp:
             prepared_temp_paths.append(media_path)
@@ -448,7 +450,8 @@ async def _prepare_json_media_group(group, json_dir, source_scope_id, link_conte
         should_add_source_header = include_external_source_header and (
             group_family != "visual" or visual_header_index == index
         )
-        caption_html = build_json_text(item, include_external_source_header=should_add_source_header)
+        _, caption_html = await db.apply_message_filters(raw_captions[index], True, original_file_name)
+        caption_html = prepend_source_header_html(caption_html, item, enabled=should_add_source_header)
         caption_html, rewrite_count = await rewrite_message_links(caption_html, source_scope_id, link_context)
         if rewrite_count:
             await db.add_msg_log("JSON_LINK_REWRITE", f"消息ID:{item_id} | 命中 {rewrite_count} 个链接改写")
