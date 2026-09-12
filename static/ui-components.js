@@ -136,7 +136,7 @@ const MappingOptionBadges = {
       } else {
         values.push(`获取:${item.realtime_fallback_to_user ? "Bot/Telegram 账号" : "Bot"}`);
       }
-      if (item.realtime_hash_perturb) values.push("重置指纹");
+      if (item.realtime_hash_perturb) values.push("修改文件哈希");
       return values;
     },
   },
@@ -186,7 +186,7 @@ const SenderIdentityOptions = {
       <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">机器人发送失败时，改用 Telegram 账号
     </label>
     <label v-if="showHashOption" class="identity-option text-xs text-slate-600">
-      <input type="checkbox" :checked="hashChecked" @change="onHashChange">微调图片和视频文件（不改变画面）
+      <input type="checkbox" :checked="hashChecked" @change="onHashChange">修改图片和视频的哈希（画面不变）
     </label>
   </div>`,
 };

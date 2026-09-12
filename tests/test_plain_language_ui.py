@@ -5,6 +5,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PlainLanguageUiTests(unittest.TestCase):
+    def test_sync_modes_describe_the_actual_difference(self):
+        app = (ROOT / 'static/app.js').read_text(encoding='utf-8')
+        self.assertIn('API复制', app)
+        self.assertIn('下载重传', app)
+        self.assertNotIn('直接复制', app)
+        self.assertNotIn('下载后发送', app)
+        self.assertIn('无需下载文件', app)
+        self.assertIn('可在更多选项中修改图片和视频的哈希', app)
+
     def test_labels_do_not_need_redundant_explanations(self):
         app = (ROOT / 'static/app.js').read_text(encoding='utf-8')
         shared = (ROOT / 'static/ui-components.js').read_text(encoding='utf-8')

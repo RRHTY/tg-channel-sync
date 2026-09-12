@@ -33,7 +33,7 @@ const StatusOverview = {
   template:`<section class="status-grid" aria-label="连接与任务状态">
     <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">机器人</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div v-if="appInfo.bot.name" class="status-detail">{{ appInfo.bot.name }}</div></div>
     <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">Telegram 账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else-if="appInfo.user.name" class="status-detail">{{ appInfo.user.name }}</div></div>
-    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : (status.result?.label || '空闲') }}</div><div class="status-detail">{{ {api:'直接复制', clone:'下载后发送', json:'导入聊天记录'}[status.mode] || '' }}</div></div>
+    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : (status.result?.label || '空闲') }}</div><div class="status-detail">{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] || '' }}</div></div>
     <div class="status-card status-tone-neutral"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
   </section>`
 };
@@ -92,7 +92,7 @@ const ChannelMapping = {
           <div class="form-stack">
             <field-group label="用谁发送"><select v-model="realtime_sender" :disabled="to_saved" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
             <label class="identity-option"><input type="checkbox" v-model="realtime_fallback_to_user">机器人无法读取或发送时，改用 Telegram 账号</label>
-            <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">微调图片和视频文件（不改变画面）</label>
+            <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">修改图片和视频的哈希（画面不变）</label>
           </div>
         </details>
         <button @click="saveRule" :disabled="saving" class="btn-primary">{{ saving ? '保存中…' : '添加同步' }}</button>
@@ -109,7 +109,7 @@ const ChannelMapping = {
             <div class="form-row"><field-group label="来源备注"><input v-model="editForm.source_title" maxlength="100" class="input-box"></field-group><field-group label="接收方备注"><input v-model="editForm.target_title" maxlength="100" class="input-box"></field-group></div>
             <field-group label="用谁发送"><select v-model="editForm.realtime_sender" :disabled="item.source_mode === 'public_user' || item.target_type === 'saved'" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
             <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_fallback_to_user">机器人发送失败时，改用 Telegram 账号</label>
-            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">微调图片和视频文件（不改变画面）</label>
+            <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">修改图片和视频的哈希（画面不变）</label>
             <div class="inline-actions"><button :disabled="saving" @click="saveEdit">保存修改</button><button :disabled="saving" @click="editing=null">取消</button></div>
           </div>
         </article>
@@ -125,15 +125,15 @@ const SyncPanel = {
   computed:{
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; },
-    modeHint(){ return { api:"复制频道里的旧消息。", clone:"先下载文件，再发到目标位置。", json:"导入 Telegram 电脑版导出的聊天记录。" }[this.form.mode]; },
+    modeHint(){ return { api:"通过 Telegram API 复制旧消息，无需下载文件。", clone:"下载文件后重新上传，可在更多选项中修改图片和视频的哈希（文件指纹）。", json:"导入 Telegram 电脑版导出的聊天记录。" }[this.form.mode]; },
     needsLogin(){ return (this.form.mode !== "json" || this.form.sender === "user" || this.form.target_type === "saved") && this.userAuth?.status !== "authorized"; }
   },
   template:`<div class="card" id="history-sync">
     <div class="panel-heading"><div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
-    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ {api:'直接复制', clone:'下载后发送', json:'导入聊天记录'}[status.mode] }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条无法确认是否发送成功；再次运行可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
+    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条无法确认是否发送成功；再次运行可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
     <div v-if="hasLastParams && !status.is_syncing" class="restore-bar"><button type="button" title="记录只保存在这个浏览器中" :disabled="starting" @click="$emit('restore')" class="text-action">沿用上次填写内容</button><button type="button" @click="$emit('forget')" class="text-action">清除记录</button></div>
     <fieldset class="form-surface" :disabled="status.is_syncing || starting" :class="{ 'opacity-50': status.is_syncing || starting }">
-      <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">直接复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载后发送</button></div>
+      <div class="mode-switch" aria-label="同步模式"><button type="button" @click="form.mode='json'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="form.mode='api'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">API复制</button><button type="button" @click="form.mode='clone'" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载重传</button></div>
       <p class="field-hint">{{ modeHint }}</p>
       <p v-if="needsLogin" class="inline-warning">请先登录 Telegram 账号才能使用此功能。<button type="button" class="text-action" @click="$emit('open-settings')">前往设置登录</button></p>
       <div v-if="form.mode !== 'json'" class="form-row"><field-group label="来源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="接收频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>
