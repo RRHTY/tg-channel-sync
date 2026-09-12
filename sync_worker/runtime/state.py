@@ -62,6 +62,7 @@ def start_sync_session(
             "unmapped": 0,
             "total": 0,
             "stop_requested": False,
+            "result": None,
             "force_send": force_send,
             "hash_perturb": hash_perturb,
             "clone_fallback_to_user": clone_fallback_to_user,

@@ -350,7 +350,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
              patch("sync_worker.clone.process.db.add_log", AsyncMock()) as mock_add_log:
             await history.process_master_sync("json", "bot", "", "@target", 1, 0, 0, "fake.json", False, "", 3)
 
-        mock_add_log.assert_any_await("INFO", "任务运行完毕：JSON | 已处理 0 / 0 | 跳过 0")
+        mock_add_log.assert_any_await("INFO", "同步完成：JSON | 成功 0 | 跳过 0 | 失败 0 | 待核对 0 | 读取失败批次 0")
 
     async def test_sync_single_message_clone_downloads_before_reupload(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -576,6 +576,8 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             history.sync_state["total"] = 33
             history.sync_state["skipped"] = 36
             history.sync_state["unmapped"] = 2
+            kwargs["outcome"].record("sent_unmapped", 2)
+            kwargs["outcome"].record("skipped", 36)
             raise sync_services.SyncNetworkRetryExhaustedError("JSON 文本发送 1 连续重试 2 次后仍无法连接")
 
         with patch("sync_worker.clone.process.db.get_all_settings", AsyncMock(return_value={})), \
@@ -588,15 +590,15 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
              patch("sync_worker.clone.process.db.add_log", AsyncMock()) as mock_add_log:
             await history.process_master_sync("json", "bot", "", "@target", 1, 0, 0, "fake.json", False, "", 3)
 
-        mock_log_sync_error.assert_awaited()
         mock_add_log.assert_any_await(
             "ERROR",
-            "任务异常终止：JSON | 已处理 36 / 33 | 跳过 36 | 已发送但未记录映射 2 组（重跑会重复发送，建议先核对目标频道）",
+            "未全部成功：JSON | 成功 0 | 跳过 36 | 失败 0 | 待核对 2 | 读取失败批次 0 | JSON 文本发送 1 连续重试 2 次后仍无法连接",
         )
 
     async def test_process_master_sync_logs_unmapped_summary_when_stopped(self):
         async def _stop_with_unmapped(*args, **kwargs):
             history.sync_state["unmapped"] = 1
+            kwargs["outcome"].record("sent_unmapped")
             history.sync_state["stop_requested"] = True
 
         with patch("sync_worker.clone.process.db.get_all_settings", AsyncMock(return_value={})), \
@@ -607,7 +609,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
         mock_add_log.assert_any_await(
             "INFO",
-            "任务结束：JSON 已停止 | 已发送但未记录映射 1 组（重跑会重复发送，建议先核对目标频道）",
+            "已中断：JSON | 成功 0 | 跳过 0 | 失败 0 | 待核对 1 | 读取失败批次 0",
         )
 
     def test_bot_media_group_can_attach_thumbnail(self):

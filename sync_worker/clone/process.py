@@ -70,6 +70,7 @@ from .helpers import (
     _parse_retry_after_seconds,
 )
 from ..json_import import process_json_sync
+from ..runtime.result import SyncResult
 
 SYNC_RESULT_SENT_MAPPED = "sent_mapped"
 SYNC_RESULT_SENT_UNMAPPED = "sent_unmapped"
@@ -1059,6 +1060,39 @@ async def process_master_sync(
     clone_fallback_to_user: bool = True,
     target_type: str = "channel",
 ):
+    outcome = SyncResult()
+    error = ""
+    stopped = False
+    try:
+        await _run_master_sync(
+            mode, sender, source_id_raw, target_id_raw, delay, start_id, end_id,
+            json_path, force_send, json_source_username, json_media_group_window_seconds,
+            hash_perturb, clone_fallback_to_user, target_type, outcome,
+        )
+    except asyncio.CancelledError:
+        stopped = True
+    except Exception as exc:
+        error = str(exc) or type(exc).__name__
+    finally:
+        result = outcome.snapshot(error=error, stopped=stopped or bool(sync_state.get("stop_requested")))
+        sync_state["result"] = result
+        try:
+            summary = (
+                f"{result['label']}：{mode.upper()} | 成功 {outcome.sent} | 跳过 {outcome.skipped} | "
+                f"失败 {outcome.failed} | 待核对 {outcome.unmapped} | 读取失败批次 {outcome.failed_batches}"
+            )
+            if error:
+                summary += f" | {error}"
+            await db.add_log("INFO" if result["status"] in {"completed", "stopped"} else "ERROR", summary)
+        finally:
+            finish_sync_session()
+
+
+async def _run_master_sync(
+    mode, sender, source_id_raw, target_id_raw, delay, start_id, end_id,
+    json_path, force_send, json_source_username, json_media_group_window_seconds,
+    hash_perturb, clone_fallback_to_user, target_type, outcome,
+):
     safe_delay = max(0.5, float(delay))
     if mode == "api":
         sender = "user"
@@ -1095,15 +1129,12 @@ async def process_master_sync(
             target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
             chat_id = None
     except Exception as exc:
-        await log_sync_error("任务中止", RuntimeError(format_channel_check_error(exc)))
-        sync_state["is_syncing"] = False
-        return
+        raise RuntimeError(format_channel_check_error(exc)) from exc
 
     if mode == "clone":
         await clear_temp_dir_files()
         await db.add_log("INFO", "已清空 temp，准备下载")
 
-    final_status = "completed"
     try:
         if mode in ["api", "clone"]:
             app, bot = bot_engine.pyro_user_app, bot_engine.aiogram_bot
@@ -1122,7 +1153,11 @@ async def process_master_sync(
                     msgs = await _safe_get_messages(source_id=source_id, app=app, msg_ids=list(range(chunk_start, min(chunk_start + 99, end_id) + 1)))
                 except SyncNetworkRetryExhaustedError:
                     raise
-                except Exception:
+                except Exception as exc:
+                    if sync_state.get("stop_requested"):
+                        break
+                    outcome.failed_batches += 1
+                    await log_sync_error(f"读取消息失败 {chunk_start}-{min(chunk_start + 99, end_id)}", exc)
                     continue
 
                 filtered_msgs = []
@@ -1131,6 +1166,7 @@ async def process_master_sync(
                         continue
                     msg_type, sync_key = get_msg_meta(msg, mode)
                     if settings.get(sync_key, "1") == "0":
+                        outcome.record("skipped")
                         continue
                     filtered_msgs.append(msg)
 
@@ -1138,7 +1174,7 @@ async def process_master_sync(
                     if sync_state["stop_requested"]:
                         break
                     if len(group) == 1:
-                        await sync_single_message(
+                        result = await sync_single_message(
                             mode,
                             sender,
                             app,
@@ -1154,7 +1190,7 @@ async def process_master_sync(
                             chat_id=chat_id,
                         )
                     else:
-                        await sync_media_group(
+                        result = await sync_media_group(
                             mode,
                             sender,
                             app,
@@ -1169,6 +1205,8 @@ async def process_master_sync(
                             include_external_source_header=include_external_source_header,
                             chat_id=chat_id,
                         )
+                    if result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested"):
+                        outcome.record(result, len(group))
         else:
             await process_json_sync(
                 sender,
@@ -1181,30 +1219,8 @@ async def process_master_sync(
                 clone_fallback_to_user=clone_fallback_to_user,
                 hash_perturb=hash_perturb,
                 target_type=target_type,
+                outcome=outcome,
             )
 
     except asyncio.CancelledError:
-        final_status = "stopped"
-    except Exception as exc:
-        final_status = "failed"
-        await log_sync_error("同步中断", exc)
-    finally:
-        unmapped_count = int(sync_state.get("unmapped", 0) or 0)
-        unmapped_summary = ""
-        if unmapped_count:
-            unmapped_summary = f" | 已发送但未记录映射 {unmapped_count} 组（重跑会重复发送，建议先核对目标频道）"
-        if final_status == "failed":
-            await db.add_log(
-                "ERROR",
-                f"任务异常终止：{sync_state.get('mode', mode.upper())} | 已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | 跳过 {sync_state.get('skipped', 0)}{unmapped_summary}",
-            )
-        elif sync_state.get("stop_requested") or final_status == "stopped":
-            await db.add_log("INFO", f"任务结束：{sync_state.get('mode', mode.upper())} 已停止{unmapped_summary}")
-        else:
-            summary = (
-                f"任务运行完毕：{sync_state.get('mode', mode.upper())} | "
-                f"已处理 {sync_state.get('current', 0)} / {sync_state.get('total', 0)} | "
-                f"跳过 {sync_state.get('skipped', 0)}{unmapped_summary}"
-            )
-            await db.add_log("INFO", summary)
-        finish_sync_session()
+        raise

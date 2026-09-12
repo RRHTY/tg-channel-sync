@@ -39,6 +39,7 @@ from ..core import (
 )
 from ..media import prepare_json_media_for_send
 from ..runtime import TEMP_DIR, count_unmapped_group, record_success, sync_state, update_state_and_check_skip
+from ..runtime.result import SyncResult
 from ..senders import build_bot_media_group, build_user_media_group
 from .grouping import _json_group_family, group_json_messages
 from .helpers import (
@@ -258,6 +259,8 @@ async def _send_json_text_parts_via_user(chat_id, text_parts, reply_to_id):
             action_label=f"文本消息 -> 辅助账号发送 {index + 1}/{len(text_parts)}",
             stop_client=app,
         )
+        if sent is None:
+            raise RuntimeError("文本分片发送未完成，部分内容可能已发送，请核对目标频道后重跑")
         if first_sent is None:
             first_sent = sent
     return first_sent
@@ -326,7 +329,7 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
             user_sent = await _send_json_text_parts_via_user(chat_id, text_parts[index:], part_reply_to_id)
             return first_sent or user_sent
         if sent is None:
-            return first_sent
+            raise RuntimeError("文本分片发送未完成，部分内容可能已发送，请核对目标频道后重跑")
         if first_sent is None:
             first_sent = sent
         index += 1
@@ -629,17 +632,22 @@ async def process_json_sync(
     clone_fallback_to_user: bool = True,
     hash_perturb: bool = False,
     target_type: str = "channel",
+    outcome: SyncResult | None = None,
 ):
+    outcome = outcome if outcome is not None else SyncResult()
     if not json_path or not os.path.exists(json_path):
-        await log_sync_error("JSON 文件不存在或路径无效", ValueError(json_path or ""))
-        return
+        raise JsonSyncFatalError(f"JSON 文件不存在或路径无效: {json_path or ''}")
 
     try:
         with open(json_path, "r", encoding="utf-8") as file_obj:
             data = json.load(file_obj)
     except Exception as exc:
-        await log_sync_error("JSON 解析失败", exc)
-        return
+        raise JsonSyncFatalError(f"JSON 解析失败: {exc}") from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("messages"), list) or any(
+        not isinstance(message, dict) for message in data["messages"]
+    ):
+        raise JsonSyncFatalError("JSON 格式无效：需要包含 messages 数组的单个聊天导出文件")
 
     messages = data.get("messages", [])
     json_dir = os.path.dirname(os.path.abspath(json_path))
@@ -653,8 +661,7 @@ async def process_json_sync(
             target_id = await resolve_chat_id(bot_engine.aiogram_bot, target_id_raw)
             chat_id = target_id
     except Exception as exc:
-        await log_sync_error("JSON 任务中止", RuntimeError(format_channel_check_error(exc, subject="目标频道信息")))
-        return
+        raise JsonSyncFatalError(format_channel_check_error(exc, subject="目标频道信息")) from exc
     source_username = normalize_channel_username(json_source_username)
     from .source import export_source_id
 
@@ -726,6 +733,12 @@ async def process_json_sync(
                 chat_id=chat_id,
             )
             if result is not None:
+                if result in (JSON_GROUP_SKIPPED, JSON_GROUP_SENT_UNMAPPED):
+                    outcome.record(result, len(group))
+                elif len(result) == len(group) and all(result):
+                    outcome.record("sent_mapped", len(group))
+                else:
+                    outcome.record("sent_unmapped", len(group))
                 sync_state["current"] += max(0, len(group) - 1)
                 await asyncio.sleep(safe_delay)
                 continue
@@ -738,6 +751,7 @@ async def process_json_sync(
             msg_id = msg.get("id", 0)
             msg_type, sync_key = get_msg_meta(msg, "json")
             if settings.get(sync_key, "1") == "0":
+                outcome.record("skipped")
                 await db.add_msg_log("JSON_DROP_TYPE", f"消息ID:{msg_id} | 类型:{msg_type} | 已被类型过滤拦截")
                 continue
 
@@ -763,10 +777,12 @@ async def process_json_sync(
 
             should_skip, text = await db.apply_message_filters(text, msg_type != "text", file_name)
             if should_skip or (msg_type == "text" and not text.strip()):
+                outcome.record("skipped")
                 await db.add_msg_log("JSON_DROP_REGEX", f"消息ID:{msg_id} | 已被正则过滤拦截")
                 continue
 
             if await update_state_and_check_skip(source_scope_id, target_id, msg_id, text[:50] or "[媒体]", force_send=force_send):
+                outcome.record("skipped")
                 continue
             text, rewrite_count = await rewrite_message_links(text, source_scope_id, link_context)
             if rewrite_count:
@@ -782,6 +798,8 @@ async def process_json_sync(
             )
 
             try:
+                if media_path and not os.path.exists(media_path):
+                    raise FileNotFoundError(f"媒体文件不存在: {media_path}")
                 if media_path and os.path.exists(media_path):
                     media_path, created_temp = await _prepare_json_media_path(media_path, media_type, msg_id, hash_perturb)
                     file_size = os.path.getsize(media_path)
@@ -1013,7 +1031,9 @@ async def process_json_sync(
                                     media_has_spoiler,
                                 )
                             if sent is None:
-                                return
+                                if sync_state["stop_requested"]:
+                                    return outcome
+                                raise RuntimeError("媒体发送未返回结果")
                         sent_id = _get_sent_message_id(sent)
                     finally:
                         if created_temp:
@@ -1041,24 +1061,33 @@ async def process_json_sync(
                             msg_id,
                         )
                     if sent is None:
-                        return
+                        if sync_state["stop_requested"]:
+                            return outcome
+                        raise RuntimeError("文本发送未返回结果")
                     sent_id = _get_sent_message_id(sent)
                 else:
-                    if media_path and not os.path.exists(media_path):
-                        await db.add_msg_log("JSON_MEDIA_MISSING", f"消息ID:{msg_id} | 媒体文件不存在，已跳过: {media_path}")
+                    outcome.record("failed")
+                    await db.add_msg_log("JSON_MEDIA_MISSING", f"消息ID:{msg_id} | 没有可发送的媒体或文本")
                     continue
 
+                if not sent_id:
+                    outcome.record("sent_unmapped")
+                    await db.add_msg_log("JSON_SEND_UNMAPPED", f"消息ID:{msg_id} | 发送未返回消息 ID，请核对目标频道")
+                    continue
                 await record_success(source_scope_id, target_id, msg_id, sent_id, force_send=force_send)
+                outcome.record("sent_mapped")
                 await db.add_msg_log("JSON_SEND", f"消息ID:{msg_id} | 目标:[{target_id}] 新ID:{sent_id} | 上传成功")
             except JsonSyncFatalError as exc:
-                sync_state["stop_requested"] = True
+                outcome.record("failed")
                 await log_sync_error(f"JSON 致命错误 ID {msg_id}", exc)
                 raise
             except Exception as exc:
                 if sync_state["stop_requested"]:
                     break
+                outcome.record("failed")
                 if isinstance(exc, SyncNetworkRetryExhaustedError):
                     raise
                 await log_sync_error(f"JSON 消息上传失败 ID {msg_id}", exc)
 
             await asyncio.sleep(safe_delay)
+    return outcome
