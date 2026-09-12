@@ -75,7 +75,7 @@
         <status-overview :app-info="appInfo" :status="syncStatus" @open-settings="openSettings"></status-overview>
         <div class="console-layout">
             <div class="console-main">
-                <sync-panel :user-auth="userAuth" @open-settings="openSettings" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
+                <sync-panel :has-last-params="!!lastSyncParams" @restore="restoreLastSyncParams" @forget="clearLastSyncParams" :user-auth="userAuth" @open-settings="openSettings" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
                 <log-viewer
                     :sys-logs="sysLogs"
                     :msg-logs="msgLogs"

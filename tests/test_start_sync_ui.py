@@ -19,7 +19,7 @@ const context = {window: {TgcsApi: {
 }}};
 vm.runInNewContext(fs.readFileSync('static/app-methods.js', 'utf8'), context);
 const start = context.window.TgcsAppMethods.startSync;
-const state = {syncStarting: false, syncStatus: {is_syncing: false}, showToast() {}, handleApiError() {}};
+const state = {syncStarting: false, syncStatus: {is_syncing: false}, rememberSyncParams() {}, showToast() {}, handleApiError() {}};
 (async () => {
   const first = start.call(state, {});
   assert.equal(state.syncStarting, true);

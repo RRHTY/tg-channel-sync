@@ -1,5 +1,10 @@
 (() => {
   const api = window.TgcsApi;
+  const syncParamKeys = ['mode', 'sender', 'source_id', 'target_id', 'start_id', 'end_id', 'json_path', 'json_source_username', 'json_media_group_window_seconds', 'delay', 'force_send', 'hash_perturb', 'clone_fallback_to_user', 'target_type'];
+  function cleanSyncParams(value) {
+    if (!value || !['api', 'json', 'clone'].includes(value.mode)) return null;
+    return Object.fromEntries(syncParamKeys.filter(key => typeof value[key] === 'string' || (typeof value[key] === 'number' && Number.isFinite(value[key]))).map(key => [key, value[key]]));
+  }
 
   const uiMethods = {
     syncModeFromStatus(status) {
@@ -25,6 +30,7 @@
       this.syncForm.json_media_group_window_seconds = Number(this.syncForm.json_media_group_window_seconds || 3);
       if (this.syncStatus?.is_syncing) this.syncModeFromStatus(this.syncStatus);
       this.currentView = this.setupStatus.needs_setup ? "setup" : "home";
+      this.loadLastSyncParams();
     },
     navButtonClass(view) {
       return this.currentView === view ? "nav-active" : "nav-idle";
@@ -350,17 +356,36 @@
   };
 
   const syncMethods = {
+    loadLastSyncParams() {
+      try { this.lastSyncParams = cleanSyncParams(JSON.parse(localStorage.getItem('tgcs-last-sync-v1'))); }
+      catch (_) { this.lastSyncParams = null; }
+    },
+    rememberSyncParams(form) {
+      this.lastSyncParams = cleanSyncParams(form);
+      try { localStorage.setItem('tgcs-last-sync-v1', JSON.stringify(this.lastSyncParams)); } catch (_) {}
+    },
+    restoreLastSyncParams() {
+      if (!this.lastSyncParams || this.syncStarting || this.syncStatus.is_syncing) return;
+      Object.assign(this.syncForm, this.lastSyncParams, { force_send: '0' });
+      this.showToast('已恢复上次参数；强制发送已关闭，请核对后启动');
+    },
+    clearLastSyncParams() {
+      this.lastSyncParams = null;
+      try { localStorage.removeItem('tgcs-last-sync-v1'); } catch (_) {}
+    },
     async startSync(form) {
       if (this.syncStarting || this.syncStatus.is_syncing) return;
       this.syncStarting = true;
       try {
-        const payload = api.buildFormData(form, {
+        const submitted = { ...form };
+        const payload = api.buildFormData(submitted, {
           valueTransform(value, key) {
             return value || (key.includes("id") ? "0" : "");
           },
         });
         const res = api.ensureSuccess(await api.postForm("/api/start_sync", payload), "启动任务失败");
         this.syncStatus = { ...this.syncStatus, is_syncing: true, starting: true };
+        this.rememberSyncParams(submitted);
         if (res.message) this.showToast(res.message);
       } catch (error) {
         this.handleApiError(error, "启动任务失败");

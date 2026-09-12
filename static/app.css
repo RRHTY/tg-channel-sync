@@ -90,6 +90,8 @@
     --log-border: #333a68;
 }
 * { box-sizing: border-box; }
+fieldset.form-surface { min-width: 0; border: 0; padding: 0; margin: 0; }
+.restore-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; color: #64748b; margin-bottom: 12px; }
 .field-hint { margin: 0; color: #64748b; font-size: 12px; line-height: 1.65; }
 .inline-warning { padding: 10px 12px; border: 1px solid #f3dc9e; border-radius: 12px; background: #fffbeb; color: #854d0e; font-size: 12px; line-height: 1.6; }
 .text-action { padding: 0 3px; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
