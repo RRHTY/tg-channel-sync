@@ -656,7 +656,8 @@ async def process_json_sync(
         await log_sync_error("JSON 任务中止", RuntimeError(format_channel_check_error(exc, subject="目标频道信息")))
         return
     source_username = normalize_channel_username(json_source_username)
-    source_scope_id = 0
+    from .source import export_source_id
+
     if source_username:
         source_scope_id = build_json_source_scope_id(source_username)
         try:
@@ -666,8 +667,22 @@ async def process_json_sync(
                 "JSON_WARN",
                 f"JSON 源频道 @{source_username} 无法解析真实 ID，已使用稳定用户名作用域导入（链接改写仅支持 t.me/@用户名）",
             )
-    elif json_source_username:
-        await db.add_msg_log("JSON_WARN", "源频道用户名格式无效，请填写 @username 或 https://t.me/username")
+    else:
+        source_scope_id, uses_file_identity = export_source_id(data)
+        if json_source_username:
+            await db.add_msg_log("JSON_WARN", "源频道用户名格式无效，请填写 @username 或 https://t.me/username")
+
+    if not source_username:
+        await db.add_msg_log(
+            "JSON_INFO",
+            "去重使用导出来源标识；旧版未填写用户名的公共去重记录不再使用，首次重跑请核对目标频道",
+        )
+        if uses_file_identity:
+            await db.add_msg_log(
+                "JSON_WARN",
+                "导出文件缺少可识别的来源 ID，按文件内容去重（移动文件不受影响）；"
+                "修改或重新导出内容后可能重复发送，建议填写稳定的源频道用户名",
+            )
 
     link_context = await build_link_rewrite_context(
         bot_engine.aiogram_bot,
