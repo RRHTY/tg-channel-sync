@@ -48,6 +48,7 @@ class HistoryMediaResumeTests(unittest.IsolatedAsyncioTestCase):
 
         async def send_group(*args, **kwargs):
             events.append(("album", [item.id for item in args[6]]))
+            kwargs["outcome"].record(history.SYNC_RESULT_SENT_MAPPED, len(args[6]))
             return history.SYNC_RESULT_SENT_MAPPED
 
         async def perform(action, **kwargs):

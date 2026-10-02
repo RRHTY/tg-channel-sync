@@ -331,6 +331,7 @@ async def sync_single_message(
     include_external_source_header: bool = False,
     source_username_override: str | None = None,
     chat_id: int | None = None,
+    _state_checked: bool = False,
 ):
     # chat_id 为实际发送目的地（收藏夹目标 = 当前辅助账号 own id），target_id 为 DB 键
     # （收藏夹目标 = sentinel -1）。普通频道目标二者相同，缺省时回退 target_id。
@@ -346,7 +347,7 @@ async def sync_single_message(
     should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
     if should_skip or (not has_media and not new_html.strip()):
         return SYNC_RESULT_SKIPPED
-    if await update_state_and_check_skip(source_id, target_id, msg.id, new_html[:50] or "[媒体]", force_send=force_send):
+    if not _state_checked and await update_state_and_check_skip(source_id, target_id, msg.id, new_html[:50] or "[媒体]", force_send=force_send):
         return SYNC_RESULT_SKIPPED
 
     reply_to_id = await resolve_reply_target(source_id, target_id, get_reply_source_msg_id(msg, mode), mode.upper(), msg.id)
@@ -669,17 +670,53 @@ async def sync_media_group(
     include_external_source_header: bool = False,
     source_username_override: str | None = None,
     chat_id: int | None = None,
+    outcome: SyncResult | None = None,
 ):
-    if chat_id is None:
-        chat_id = target_id
-    if await update_state_and_check_skip(source_id, target_id, group[0].id, "[媒体组]", force_send=force_send):
+    pending = []
+    for item in group:
+        if await update_state_and_check_skip(source_id, target_id, item.id, "[媒体组]", force_send=force_send):
+            if outcome is not None:
+                outcome.record(SYNC_RESULT_SKIPPED)
+        else:
+            pending.append(item)
+    if not pending:
         return SYNC_RESULT_SKIPPED
     if await _media_group_should_drop(group, mode):
         await db.add_msg_log(
             f"{mode.upper()}_DROP_REGEX",
             f"原始:[{source_id}] 媒体组消息ID:{[item.id for item in group]} | 已被正则过滤拦截",
         )
-        return SYNC_RESULT_SKIPPED
+        result = SYNC_RESULT_SKIPPED
+    else:
+        common_kwargs = {
+            "hash_perturb": hash_perturb,
+            "clone_fallback_to_user": clone_fallback_to_user,
+            "include_external_source_header": include_external_source_header,
+            "source_username_override": source_username_override,
+            "chat_id": chat_id,
+        }
+        if len(pending) == 1:
+            result = await sync_single_message(
+                mode, sender, app, bot, source_id, target_id, pending[0], safe_delay, force_send,
+                _state_checked=True, **common_kwargs,
+            )
+        else:
+            result = await _send_media_group(
+                mode, sender, app, bot, source_id, target_id, pending, safe_delay, force_send,
+                **common_kwargs,
+            )
+    if outcome is not None and (result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested")):
+        outcome.record(result, len(pending))
+    return result
+
+
+async def _send_media_group(
+    mode, sender, app, bot, source_id, target_id, group, safe_delay, force_send,
+    hash_perturb=False, clone_fallback_to_user=True, include_external_source_header=False,
+    source_username_override=None, chat_id=None,
+):
+    if chat_id is None:
+        chat_id = target_id
 
     reply_to_id = await resolve_reply_target(source_id, target_id, get_reply_source_msg_id(group[0], mode), mode.upper(), group[0].id)
     quote_data = get_quote_payload(group[0])
@@ -1234,6 +1271,8 @@ async def _run_master_sync(
                         include_external_source_header=include_external_source_header,
                         chat_id=chat_id,
                     )
+                    if result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested"):
+                        outcome.record(result)
                 else:
                     result = await sync_media_group(
                         mode,
@@ -1249,9 +1288,8 @@ async def _run_master_sync(
                         clone_fallback_to_user=clone_fallback_to_user,
                         include_external_source_header=include_external_source_header,
                         chat_id=chat_id,
+                        outcome=outcome,
                     )
-                if result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested"):
-                    outcome.record(result, len(group))
         else:
             await process_json_sync(
                 sender,
