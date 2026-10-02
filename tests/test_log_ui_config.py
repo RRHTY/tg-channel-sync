@@ -56,26 +56,24 @@ class LogUiConfigTests(unittest.TestCase):
         self.assertIn('class="status-grid"', content)
         self.assertIn('class="mode-switch"', content)
         self.assertIn('label="来源频道"', content)
-        self.assertIn('label="接收频道"', content)
+        self.assertIn(':label="form.target_type === \'saved\' ? \'接收位置\' : \'接收频道\'"', content)
+        self.assertIn(':label="to_saved ? \'接收位置\' : \'接收频道\'"', content)
         self.assertIn('class="delete-action"', content)
 
-    def test_more_options_look_and_read_like_expandable_panels(self):
+    def test_sync_options_are_available_without_expanding_a_panel(self):
         app_content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-        css_content = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-
-        self.assertIn('class="details-summary-copy"', app_content)
-        self.assertIn('class="details-summary-hint"', app_content)
-        self.assertIn(".compact-details summary::after", css_content)
-        self.assertIn(".compact-details[open] summary::after", css_content)
-        self.assertIn("border-radius: 14px", css_content)
-        self.assertIn(".compact-details[open]", css_content)
+        self.assertNotIn('更多选项', app_content)
+        self.assertEqual(app_content.count('class="sync-options"'), 2)
+        self.assertIn('每条消息间隔（秒）', app_content)
+        self.assertIn('机器人无法读取或发送时，改用 Telegram 账号', app_content)
 
     def test_log_viewer_uses_one_switchable_panel(self):
         content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('activeKind:"system"', content)
         self.assertIn('class="log-switch"', content)
-        self.assertIn('v-if="activeKind === \'system\'"', content)
+        self.assertIn('v-show="activeKind === \'system\'"', content)
+        self.assertIn('v-show="activeKind === \'message\'"', content)
 
     def test_log_actions_share_the_same_header_row(self):
         content = (ROOT / "static" / "ui-components.js").read_text(encoding="utf-8")
@@ -148,8 +146,8 @@ class LogUiConfigTests(unittest.TestCase):
     def test_adding_filter_rule_preserves_selection_fields(self):
         content = (ROOT / "static" / "app-methods.js").read_text(encoding="utf-8")
 
-        self.assertIn('rule_type: rule.rule_type', content)
-        self.assertIn('is_case_sensitive: rule.is_case_sensitive', content)
+        self.assertIn('rule_type: submittedRule.rule_type', content)
+        self.assertIn('is_case_sensitive: submittedRule.is_case_sensitive', content)
         self.assertNotIn('this.newFilter = { rule_type: "replace"', content)
 
     def test_view_navigation_returns_to_page_top(self):

@@ -25,8 +25,27 @@ const FormSection = {
   </section>`,
 };
 
+let fieldGroupSequence = 0;
 const FieldGroup = {
   props: ["label", "hint", "labelClass", "hintClass", "wrapperClass", "badge", "badgeClass"],
+  data() { return { fieldId: "tgcs-field-" + (++fieldGroupSequence) }; },
+  mounted() { this.connectLabel(); },
+  updated() { this.connectLabel(); },
+  methods: {
+    connectLabel() {
+      const label = this.$el.querySelector(".field-label-row label");
+      const control = this.$el.querySelector('input:not([type="checkbox"]):not([type="radio"]), select, textarea');
+      if (!label) return;
+      if (!control) { label.removeAttribute("for"); return; }
+      if (!control.id) control.id = this.fieldId;
+      label.htmlFor = control.id;
+      if (this.hint) {
+        const ids = new Set((control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+        ids.add(this.fieldId + "-hint");
+        control.setAttribute("aria-describedby", [...ids].join(" "));
+      }
+    },
+  },
   template: `<div :class="wrapperClass || 'field-group'">
     <div v-if="label || badge" class="field-label-row">
       <label v-if="label" :class="labelClass || 'field-label'">{{ label }}</label>
@@ -36,7 +55,7 @@ const FieldGroup = {
       >{{ badge }}</span>
     </div>
     <slot></slot>
-    <p v-if="hint" :class="hintClass || 'field-hint'">{{ hint }}</p>
+    <p v-if="hint" :id="fieldId + '-hint'" :class="hintClass || 'field-hint'">{{ hint }}</p>
   </div>`,
 };
 

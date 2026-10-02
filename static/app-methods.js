@@ -56,6 +56,23 @@
       this.currentView = view;
       this.$nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
     },
+    selectWorkspace(section) {
+      if (!["history", "automatic", "filters", "logs"].includes(section)) return;
+      this.workspaceSection = section;
+      this.currentView = "home";
+      history.replaceState(null, "", location.pathname + location.search + "#" + section);
+      this.$nextTick(() => {
+        const heading = document.getElementById("workspace-" + section)?.querySelector("h2");
+        if (heading) {
+          heading.tabIndex = -1;
+          heading.focus({ preventScroll: true });
+        }
+        if (section === "logs" && !this.workspaceLogsOpened) {
+          this.workspaceLogsOpened = true;
+          this.scrollLogsToBottom();
+        }
+      });
+    },
     showToast(msg, type = "info") {
       if (!msg) return;
       this.notice = { message: msg, type };
@@ -180,15 +197,15 @@
       }, 1000);
     },
     isPanelNearBottom(panel, threshold = 24) {
-      if (!panel) return true;
+      if (!panel || !panel.getClientRects().length) return false;
       return panel.scrollHeight - panel.scrollTop - panel.clientHeight <= threshold;
     },
     scrollLogsToBottom(options = {}) {
       const { sys = true, msg = true } = options;
       const sysPanel = document.getElementById("sys-log-panel");
       const msgPanel = document.getElementById("msg-log-panel");
-      if (sys && sysPanel) sysPanel.scrollTop = sysPanel.scrollHeight;
-      if (msg && msgPanel) msgPanel.scrollTop = msgPanel.scrollHeight;
+      if (sys && sysPanel?.getClientRects().length) sysPanel.scrollTop = sysPanel.scrollHeight;
+      if (msg && msgPanel?.getClientRects().length) msgPanel.scrollTop = msgPanel.scrollHeight;
     },
     setupSSE() {
       this.serverAction = "";
@@ -383,7 +400,11 @@
     useMapping(item) {
       if (this.syncStatus.is_syncing || this.syncStarting) return this.showToast("请等待当前任务结束");
       Object.assign(this.syncForm, { mode: "api", source_id: String(item.source_id), target_id: String(item.target_id), target_type: item.target_type, force_send: "0" });
-      document.getElementById("history-sync")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      this.selectWorkspace("history");
+      this.$nextTick(() => {
+        document.getElementById("history-sync")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.querySelector("#history-sync .sync-range input")?.focus({ preventScroll: true });
+      });
       this.showToast("已填入源和目标，请检查范围后启动");
     },
     async deleteMapping(sourceId, targetId) {
@@ -397,19 +418,24 @@
       }
     },
     async addFilter(rule) {
+      if (this.filterSaving) return;
+      this.filterSaving = true;
+      const submittedRule = { ...rule };
       try {
-        const form = api.buildFormData(rule);
+        const form = api.buildFormData(submittedRule);
         const res = api.ensureSuccess(await api.postForm("/api/filter_rules", form), "添加过滤规则失败");
         if (res.message) this.showToast(res.message);
         await this.loadFilters();
         this.newFilter = {
-          rule_type: rule.rule_type,
+          rule_type: submittedRule.rule_type,
           pattern: "",
           replacement: "",
-          is_case_sensitive: rule.is_case_sensitive,
+          is_case_sensitive: submittedRule.is_case_sensitive,
         };
       } catch (error) {
         this.handleApiError(error, "添加过滤规则失败");
+      } finally {
+        this.filterSaving = false;
       }
     },
     async deleteFilter(id) {

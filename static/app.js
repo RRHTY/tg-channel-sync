@@ -1,4 +1,4 @@
-﻿const { createApp } = Vue;
+const { createApp } = Vue;
 const {
   AppCard,
   SectionHeader,
@@ -18,13 +18,13 @@ const {
 const HELP_LINK = "https://github.com/RRHTY/tg-channel-sync/issues/2";
 
 const BotApiHint = {
-  template: `<p class="text-xs text-gray-500 mt-1">只有自建了机器人接口才需要填写。<a :href="helpLink" target="_blank" class="text-blue-600 hover:underline">查看配置方法</a></p>`,
+  template: `<p class="text-xs text-gray-500 mt-1">只有自建了机器人接口才需要填写。<a :href="helpLink" target="_blank" class="text-blue-600 underline underline-offset-2">查看配置方法</a></p>`,
   data(){ return { helpLink: HELP_LINK }; }
 };
 
 const SetupWizard = {
   props:["config","saving"], components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint },
-  template:`<app-card class="max-w-3xl mx-auto"><section-header title="首次设置" description="先填写机器人 Token，其他设置可以稍后再改。"></section-header><form-section title="机器人" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><field-group label="机器人 Token（必填）"><input v-model="config.telegram.bot_token" type="text" class="input-box"></field-group><field-group label="自建机器人接口地址（选填）"><input v-model="config.telegram.bot_api_base_url" type="text" class="input-box"><bot-api-hint></bot-api-hint></field-group></div></form-section><form-section title="Telegram 账号" description="复制旧消息或保存到收藏夹时，需要在设置中登录账号。" title-class="text-sm font-bold text-gray-800"><div class="field-grid field-grid-md-2"><field-group label="账号 API ID"><input v-model="config.telegram.api_id" type="number" class="input-box"></field-group><field-group label="账号 API Hash"><input v-model="config.telegram.api_hash" type="text" class="input-box"></field-group></div></form-section><form-section title="网络代理" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><label class="flex items-center text-sm"><input v-model="config.proxy.enabled" type="checkbox" class="mr-2">启用代理</label><div class="field-grid field-grid-md-2" :class="{ 'opacity-50': !config.proxy.enabled }"><field-group label="代理地址"><input v-model="config.proxy.host" type="text" class="input-box"></field-group><field-group label="代理端口"><input v-model="config.proxy.port" type="number" class="input-box"></field-group><field-group label="代理用户名（选填）"><input v-model="config.proxy.username" type="text" class="input-box"></field-group><field-group label="代理密码（选填）"><input v-model="config.proxy.password" type="password" class="input-box"></field-group></div></div></form-section><action-bar class-name="action-bar mt-6"><button @click="$emit('save', true)" :disabled="saving" class="btn-primary">保存并重启</button><button @click="$emit('save', false)" :disabled="saving" class="btn-secondary">仅保存配置</button></action-bar></app-card>`
+  template:`<app-card class="max-w-3xl mx-auto"><section-header title="首次设置" description="先填写机器人 Token，其他设置可以稍后再改。"></section-header><form-section title="机器人" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><field-group label="机器人 Token（必填）"><input v-model="config.telegram.bot_token" type="text" class="input-box"></field-group><field-group label="自建机器人接口地址（选填）"><input v-model="config.telegram.bot_api_base_url" type="text" class="input-box"><bot-api-hint></bot-api-hint></field-group></div></form-section><form-section title="Telegram 账号" description="复制旧消息或保存到收藏夹时，需要在设置中登录账号。" title-class="text-sm font-bold text-gray-800"><div class="field-grid field-grid-md-2"><field-group label="账号 API ID"><input v-model="config.telegram.api_id" type="number" class="input-box"></field-group><field-group label="账号 API Hash"><input v-model="config.telegram.api_hash" type="text" class="input-box"></field-group></div></form-section><form-section title="网络代理" title-class="text-sm font-bold text-gray-800"><div class="form-stack"><label class="flex items-center text-sm"><input v-model="config.proxy.enabled" type="checkbox" class="mr-2">启用代理</label><div class="field-grid field-grid-md-2" :class="{ 'settings-inactive': !config.proxy.enabled }"><field-group label="代理地址"><input v-model="config.proxy.host" type="text" class="input-box"></field-group><field-group label="代理端口"><input v-model="config.proxy.port" type="number" class="input-box"></field-group><field-group label="代理用户名（选填）"><input v-model="config.proxy.username" type="text" class="input-box"></field-group><field-group label="代理密码（选填）"><input v-model="config.proxy.password" type="password" class="input-box"></field-group></div></div></form-section><action-bar class-name="action-bar mt-6"><button @click="$emit('save', true)" :disabled="saving" class="btn-primary">保存并重启</button><button @click="$emit('save', false)" :disabled="saving" class="btn-secondary">仅保存配置</button></action-bar></app-card>`
 };
 
 const StatusOverview = {
@@ -33,7 +33,7 @@ const StatusOverview = {
   template:`<section class="status-grid" aria-label="连接与任务状态">
     <div class="status-card" :class="tone(appInfo.bot.status)"><div class="status-label">机器人</div><div class="status-value">{{ appInfo.bot.status || '未配置' }}</div><div v-if="appInfo.bot.name" class="status-detail">{{ appInfo.bot.name }}</div></div>
     <div class="status-card" :class="tone(appInfo.user.status)"><div class="status-label">Telegram 账号</div><div class="status-value">{{ appInfo.user.status === '需要登录' ? '未登录' : (appInfo.user.status || '未配置') }}</div><div v-if="appInfo.user.status === '需要登录'" class="status-detail"><button @click="$emit('open-settings')" class="font-semibold underline">前往设置登录</button></div><div v-else-if="appInfo.user.name" class="status-detail">{{ appInfo.user.name }}</div></div>
-    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><div class="status-value">{{ status.is_syncing ? '运行中' : (status.result?.label || '空闲') }}</div><div class="status-detail">{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] || '' }}</div></div>
+    <div class="status-card" :class="tone(status.is_syncing ? '运行中' : '空闲')"><div class="status-label">任务状态</div><button v-if="status.is_syncing || status.result" type="button" class="status-value status-task-link" @click="$emit('open-history')">{{ status.is_syncing ? '运行中' : status.result.label }}</button><div v-else class="status-value">空闲</div><div class="status-detail">{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] || '' }}</div></div>
     <div class="status-card status-tone-neutral"><div class="status-label">同步进度</div><div class="status-value">{{ status.current || 0 }} / {{ status.total || 0 }}</div><div class="status-detail">已跳过 {{ status.skipped || 0 }} 条</div></div>
   </section>`
 };
@@ -41,10 +41,16 @@ const StatusOverview = {
 const ChannelMapping = {
   props:["mappings", "saveMapping", "updateMapping"],
   components:{ AppCard, FieldGroup, MappingOptionBadges, EmptyState },
-  data(){ return { source:"", target:"", realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false, to_saved:false, saving:false, editing:null, editForm:{}, actionKey:"" }; },
+  data(){ return { source:"", target:"", realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false, to_saved:false, saving:false, adding:false, editing:null, editForm:{}, actionKey:"" }; },
   computed:{ mappingCount(){ return this.mappings?.mappings?.length || 0; } },
   methods:{
+    toggleAdd(){
+      if(this.saving) return;
+      this.adding = !this.adding;
+      if(this.adding) this.$nextTick(() => this.$el.querySelector('.mapping-form input')?.focus());
+    },
     async saveRule(){
+      if(this.saving) return;
       if(!this.source.trim() || (!this.to_saved && !this.target.trim())){
         this.$emit("log-error", "请填写来源频道和接收频道"); return;
       }
@@ -56,18 +62,21 @@ const ChannelMapping = {
           realtime_hash_perturb: this.realtime_hash_perturb ? "1" : "0",
           target_type: this.to_saved ? "saved" : "channel",
         });
-        if(saved){ this.source = ""; this.target = ""; }
+        if(saved){ this.source = ""; this.target = ""; this.adding = false; }
       } finally { this.saving = false; }
     },
     edit(item){
+      if(this.saving) return;
       this.editing = item;
       this.editForm = { source_title:item.source_title, target_title:item.target_title,
         realtime_sender:item.realtime_sender, realtime_fallback_to_user:item.realtime_fallback_to_user,
         realtime_hash_perturb:item.realtime_hash_perturb };
     },
     async saveEdit(){
+      if(this.saving || !this.editing) return;
+      const item = this.editing;
       this.saving = true;
-      try { if(await this.updateMapping(this.editing, this.editForm)) this.editing = null; }
+      try { if(await this.updateMapping(item, { ...this.editForm }) && this.editing === item) this.editing = null; }
       finally { this.saving = false; }
     },
     async toggle(item){
@@ -80,38 +89,38 @@ const ChannelMapping = {
     }
   },
   template:`
-    <app-card>
-      <div class="panel-heading"><div><h2 class="panel-title">自动同步</h2></div><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span></div>
-      <div class="mapping-form">
+    <app-card class="mapping-workspace">
+      <div class="panel-heading"><div><h2 class="panel-title">自动同步</h2></div><div class="workspace-heading-actions"><span class="field-badge field-badge-muted">{{ mappingCount }} 条</span><button type="button" class="mapping-add-toggle" :class="adding ? 'btn-secondary' : 'btn-primary'" :disabled="saving" :aria-expanded="adding" aria-controls="mapping-add-form" @click="toggleAdd"><svg v-if="!adding" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>{{ adding ? '取消添加' : '新增同步' }}</button></div></div>
+      <fieldset v-show="adding" id="mapping-add-form" class="mapping-form" :disabled="saving" :aria-busy="saving">
         <div class="form-row">
           <field-group label="来源频道"><input v-model="source" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
-          <field-group v-if="!to_saved" label="接收频道"><input v-if="!to_saved" v-model="target" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"></field-group>
+          <field-group :label="to_saved ? '接收位置' : '接收频道'"><input v-if="!to_saved" v-model="target" :disabled="saving" placeholder="ID、@用户名或 t.me 链接" class="input-box"><label class="identity-option destination-choice"><input type="checkbox" v-model="to_saved" :disabled="saving">保存到我的 Telegram 收藏夹</label></field-group>
         </div>
-        <label class="identity-option"><input type="checkbox" v-model="to_saved" :disabled="saving">保存到我的 Telegram 收藏夹</label>
-        <details class="compact-details"><summary><span class="details-summary-copy"><span class="details-summary-title">更多选项</span><span class="details-summary-hint">用谁发送、失败回退和媒体哈希</span></span></summary>
+
+        <div class="sync-options">
           <div class="form-stack">
             <field-group label="用谁发送"><select v-model="realtime_sender" :disabled="to_saved" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
             <label class="identity-option"><input type="checkbox" v-model="realtime_fallback_to_user">机器人无法读取或发送时，改用 Telegram 账号</label>
             <label class="identity-option"><input type="checkbox" v-model="realtime_hash_perturb">修改图片和视频的哈希（画面不变）</label>
           </div>
-        </details>
+        </div>
         <button @click="saveRule" :disabled="saving" class="btn-primary">{{ saving ? '保存中…' : '添加同步' }}</button>
-      </div>
+      </fieldset>
       <div class="mapping-scroll mt-4 space-y-2">
         <article v-for="item in mappings.mappings || []" :key="item.source_id + ':' + item.target_id" class="mapping-entry" :class="{ 'mapping-paused': !item.enabled }">
           <div class="mapping-route"><strong :title="item.source_id">{{ item.source_title || item.source_id }}</strong><span aria-hidden="true">→</span><strong :title="item.target_id">{{ item.target_title || item.target_id }}</strong></div>
           <div class="mapping-meta"><span>{{ item.enabled ? '已启用' : '已暂停' }}</span><span>{{ item.source_mode === 'public_user' ? 'Telegram 账号读取' : '机器人接收' }}</span></div>
           <div class="inline-actions">
-            <button @click="$emit('use', item)">填入历史同步</button><button @click="edit(item)">编辑</button>
+            <button @click="$emit('use', item)">填入历史同步</button><button :disabled="saving" @click="edit(item)">编辑</button>
             <button :disabled="!!actionKey" @click="toggle(item)">{{ item.enabled ? '暂停' : '恢复' }}</button><button @click="remove(item)" class="danger-text">删除</button>
           </div>
-          <div v-if="editing && editing.source_id === item.source_id && editing.target_id === item.target_id" class="mapping-editor form-stack">
+          <fieldset v-if="editing && editing.source_id === item.source_id && editing.target_id === item.target_id" class="mapping-editor form-stack" :disabled="saving" :aria-busy="saving">
             <div class="form-row"><field-group label="来源备注"><input v-model="editForm.source_title" maxlength="100" class="input-box"></field-group><field-group label="接收方备注"><input v-model="editForm.target_title" maxlength="100" class="input-box"></field-group></div>
             <field-group label="用谁发送"><select v-model="editForm.realtime_sender" :disabled="item.source_mode === 'public_user' || item.target_type === 'saved'" class="input-box"><option value="bot">机器人</option><option value="user">Telegram 账号</option></select></field-group>
             <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_fallback_to_user">机器人发送失败时，改用 Telegram 账号</label>
             <label class="identity-option"><input type="checkbox" v-model="editForm.realtime_hash_perturb">修改图片和视频的哈希（画面不变）</label>
-            <div class="inline-actions"><button :disabled="saving" @click="saveEdit">保存修改</button><button :disabled="saving" @click="editing=null">取消</button></div>
-          </div>
+            <div class="inline-actions"><button :disabled="saving" @click="saveEdit">{{ saving ? '保存中…' : '保存修改' }}</button><button :disabled="saving" @click="editing=null">取消</button></div>
+          </fieldset>
         </article>
         <empty-state v-if="!mappingCount" text="选好两个频道，新增消息就会自动复制过去。"></empty-state>
       </div>
@@ -126,7 +135,7 @@ const SyncPanel = {
   computed:{
     supportsSenderOptions(){ return (this.form.mode === "json" || this.form.mode === "clone") && this.form.target_type !== "saved"; },
     supportsHashPerturb(){ return this.form.mode === "json" || this.form.mode === "clone"; },
-    modeHint(){ return { api:"通过 Telegram API 复制旧消息，无需下载文件。", clone:"下载文件后重新上传，可在更多选项中修改图片和视频的哈希（文件指纹）。", json:"导入 Telegram 电脑版导出的聊天记录。" }[this.form.mode]; },
+    modeHint(){ return { api:"通过 Telegram API 复制旧消息，无需下载文件。", clone:"下载文件后重新上传，可修改图片和视频的哈希（文件指纹）。", json:"导入 Telegram 电脑版导出的聊天记录。" }[this.form.mode]; },
     requiresAccount(){ return this.form.mode !== "json" || this.form.sender === "user" || this.form.target_type === "saved"; },
     accountInitializing(){ return this.requiresAccount && this.userAuth?.status === "initializing"; },
     needsLogin(){ return this.requiresAccount && !this.accountInitializing && this.userAuth?.status !== "authorized"; }
@@ -141,43 +150,55 @@ const SyncPanel = {
       }
     }
   },
-  template:`<div class="card" id="history-sync">
-    <div class="panel-heading"><div><h2 class="panel-title">历史同步</h2></div><span v-if="status.is_syncing" class="field-badge">运行中</span></div>
-    <div class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条无法确认是否发送成功；再次运行可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
-    <div v-if="hasLastParams && !status.is_syncing" class="restore-bar"><button type="button" title="记录只保存在这个浏览器中" :disabled="starting" @click="$emit('restore')" class="text-action">沿用上次填写内容</button><button type="button" @click="$emit('forget')" class="text-action">清除记录</button></div>
+  template:`<div class="card history-workspace" id="history-sync">
+    <div class="panel-heading"><div><h2 class="panel-title">历史同步</h2></div><div class="workspace-heading-actions"><span v-if="status.is_syncing" class="field-badge">运行中</span><button type="button" class="text-action" @click="$emit('open-logs')">查看日志</button></div></div>
+    <div v-if="!status.is_syncing" class="restore-bar"><button type="button" title="记录只保存在这个浏览器中" :disabled="starting || !hasLastParams" @click="$emit('restore')" class="text-action">沿用上次填写内容</button><button type="button" :disabled="starting || !hasLastParams" @click="$emit('forget')" class="text-action">清除记录</button></div>
     <fieldset class="form-surface" :disabled="status.is_syncing || starting" :class="{ 'opacity-50': status.is_syncing || starting }">
       <div class="mode-switch" aria-label="同步模式"><button type="button" @click="selectMode('json')" class="mode-button" :class="{ 'mode-button-active': form.mode === 'json' }">JSON 导入</button><button type="button" @click="selectMode('api')" class="mode-button" :class="{ 'mode-button-active': form.mode === 'api' }">API复制</button><button type="button" @click="selectMode('clone')" class="mode-button" :class="{ 'mode-button-active': form.mode === 'clone' }">下载重传</button></div>
       <p class="field-hint">{{ modeHint }}</p>
       <p v-if="accountInitializing" class="text-sm text-gray-500" role="status">正在连接 Telegram 账号，请稍候…</p>
       <p v-else-if="needsLogin" class="inline-warning">请先登录 Telegram 账号才能使用此功能。<button type="button" class="text-action" @click="$emit('open-settings')">前往设置登录</button></p>
-      <div v-if="form.mode !== 'json'" class="form-row"><field-group label="来源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group v-if="form.target_type !== 'saved'" label="接收频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group></div>
-      <div v-else class="form-surface"><field-group v-if="form.target_type !== 'saved'" label="接收频道"><input v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group label="JSON 文件路径"><input v-model="form.json_path" placeholder="例如 D:/Export/result.json" class="input-box font-mono text-sm"></field-group><p class="field-hint">填写运行本程序的电脑上的文件路径，图片和视频不要移出导出文件夹。Docker 用户请填写容器内路径。</p></div>
-      <label class="choice-card"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span><span class="choice-title">保存到我的 Telegram 收藏夹</span></span></label>
-      <div v-if="form.mode === 'api' || form.mode === 'clone'" class="form-row"><field-group label="起始消息 ID"><input v-model="form.start_id" type="number" min="0" placeholder="留空：从头开始" class="input-box"></field-group><field-group label="结束消息 ID"><input v-model="form.end_id" type="number" min="0" placeholder="留空：直到最新" class="input-box"></field-group></div>
-      <details class="compact-details"><summary><span class="details-summary-copy"><span class="details-summary-title">更多选项</span><span class="details-summary-hint">用谁发送、媒体哈希、发送间隔与重复策略</span></span></summary><div class="form-surface">
+      <div class="sync-basics"><div v-if="form.mode !== 'json'" class="form-row"><field-group label="来源频道"><input v-model="form.source_id" placeholder="ID 或 t.me 链接" class="input-box"></field-group><field-group :label="form.target_type === 'saved' ? '接收位置' : '接收频道'"><input v-if="form.target_type !== 'saved'" v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"><label class="choice-card destination-choice"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span class="choice-title">保存到我的 Telegram 收藏夹</span></label></field-group></div>
+      <div v-else class="form-surface"><field-group :label="form.target_type === 'saved' ? '接收位置' : '接收频道'"><input v-if="form.target_type !== 'saved'" v-model="form.target_id" placeholder="ID 或 t.me 链接" class="input-box"><label class="choice-card destination-choice"><input type="checkbox" v-model="form.target_type" true-value="saved" false-value="channel"><span class="choice-title">保存到我的 Telegram 收藏夹</span></label></field-group><field-group label="JSON 文件路径"><input v-model="form.json_path" placeholder="例如 D:/Export/result.json" class="input-box font-mono text-sm"></field-group><p class="field-hint">填写运行本程序的电脑上的文件路径，图片和视频不要移出导出文件夹。Docker 用户请填写容器内路径。</p></div>
+
+      </div><div v-if="form.mode === 'api' || form.mode === 'clone'" class="form-row sync-range"><field-group label="起始消息 ID"><input v-model="form.start_id" type="number" min="0" placeholder="留空：从头开始" class="input-box"></field-group><field-group label="结束消息 ID"><input v-model="form.end_id" type="number" min="0" placeholder="留空：直到最新" class="input-box"></field-group></div>
+      <div class="sync-options"><div class="form-surface">
         <sender-identity-options v-if="supportsSenderOptions" :sender="form.sender" :fallback-value="form.clone_fallback_to_user" :show-hash-option="supportsHashPerturb" :hash-value="form.hash_perturb" fallback-true-value="1" fallback-false-value="0" hash-true-value="1" hash-false-value="0" @update:sender="form.sender = $event" @update:fallback="form.clone_fallback_to_user = $event" @update:hash="form.hash_perturb = $event"></sender-identity-options>
         <div v-if="form.mode === 'json'" class="form-row"><field-group label="来源频道用户名（可选）"><input v-model="form.json_source_username" placeholder="@username，用于链接改写" class="input-box"></field-group><field-group label="相隔多少秒以内的消息合成相册"><input v-model="form.json_media_group_window_seconds" type="number" min="1" step="1" class="input-box"></field-group></div>
         <field-group label="每条消息间隔（秒）"><input v-model="form.delay" type="number" step="0.5" min="0.5" class="input-box"></field-group>
         <label class="choice-card"><input type="checkbox" v-model="form.force_send" true-value="1" false-value="0"><span><span class="choice-title">重新发送已同步的消息</span><span class="choice-description">会产生重复消息</span></span></label>
-      </div></details>
+      </div></div>
     </fieldset>
-    <button v-if="!status.is_syncing" type="button" :disabled="starting || !connected" @click="$emit('start', form)" class="btn-primary mt-4">{{ starting ? '启动中…' : (!connected ? '等待连接恢复' : '开始同步') }}</button><button v-else-if="stopping" type="button" class="btn-primary mt-4 !bg-red-600">正在停止<span class="dot-anim"></span></button><button v-else type="button" :disabled="!connected" @click="$emit('stop')" class="btn-primary mt-4 !bg-red-600">停止同步</button>
-  </div>`
+<div class="sync-action-row">    <div v-if="status.is_syncing || status.result" class="progress-shell"><template v-if="status.is_syncing"><div class="sync-progress-meta mb-2 flex justify-between text-xs font-semibold"><span>{{ {api:'API复制', clone:'下载重传', json:'导入聊天记录'}[status.mode] }}</span><span>{{ status.current }} / {{ status.total }}</span></div><div class="sync-progress-track mb-3"><div class="sync-progress-value" :style="{ width: (status.total > 0 ? status.current / status.total * 100 : 0) + '%' }"></div></div><p class="break-all text-xs text-slate-500">{{ status.current_text || ('已跳过 ' + status.skipped + ' 条') }}</p></template><div v-else-if="status.result" role="status" class="text-sm"><p>{{ status.result.label }} · 成功 {{ status.result.sent }} · 跳过 {{ status.result.skipped }} · 失败 {{ status.result.failed }}</p><p v-if="status.result.unmapped" class="text-amber-700">{{ status.result.unmapped }} 条无法确认是否发送成功；再次运行可能重复发送。</p><p v-if="status.result.failed_batches" class="text-amber-700">{{ status.result.failed_batches }} 批消息读取失败，详见日志。</p><p v-if="status.result.error" class="break-all text-red-600">{{ status.result.error }}</p></div><div v-else class="flex min-h-[56px] items-center text-xs text-slate-400">等待任务</div></div>
+<div class="sync-submit">    <button v-if="!status.is_syncing" type="button" :disabled="starting || !connected" @click="$emit('start', form)" class="btn-primary">{{ starting ? '启动中…' : (!connected ? '等待连接恢复' : '开始同步') }}</button><button v-else-if="stopping" type="button" class="btn-primary !bg-red-600">正在停止<span class="dot-anim"></span></button><button v-else type="button" :disabled="!connected" @click="$emit('stop')" class="btn-primary !bg-red-600">停止同步</button>
+</div></div>  </div>`
 };
 
 const LogViewer = {
   components:{ LogPanel },
   props:["sysLogs","msgLogs"],
-  data(){ return { activeKind:"system" }; },
+  data(){ return { activeKind:"system", openedKinds:{ system:true, message:false } }; },
+  methods:{
+    selectKind(kind){
+      this.activeKind = kind;
+      if(this.openedKinds[kind]) return;
+      this.openedKinds[kind] = true;
+      this.$nextTick(() => {
+        const panel = document.getElementById(kind === "system" ? "sys-log-panel" : "msg-log-panel");
+        if(panel?.getClientRects().length) panel.scrollTop = panel.scrollHeight;
+      });
+    }
+  },
   template:`<div class="log-workspace" aria-description="导出可获取当前保留的全部日志">
-    <div class="log-switch" role="tablist" aria-label="日志类型"><button type="button" role="tab" :aria-selected="activeKind === 'system'" :class="{ active: activeKind === 'system' }" @click="activeKind='system'">系统日志 · {{ (sysLogs || []).length }}</button><button type="button" role="tab" :aria-selected="activeKind === 'message'" :class="{ active: activeKind === 'message' }" @click="activeKind='message'">消息日志 · {{ (msgLogs || []).length }}</button></div>
-    <log-panel v-if="activeKind === 'system'" title="系统日志" description="最近记录" :logs="sysLogs" kind="system" panel-id="sys-log-panel" @clear="$emit('clear-sys-logs')" @export="$emit('export-sys-logs')"></log-panel>
-    <log-panel v-else title="消息日志" description="最近记录" :logs="msgLogs" kind="message" panel-id="msg-log-panel" @clear="$emit('clear-msg-logs')" @export="$emit('export-msg-logs')"></log-panel>
+    <div class="log-switch" role="group" aria-label="日志类型"><button type="button" :aria-pressed="activeKind === 'system'" aria-controls="sys-log-card" :class="{ active: activeKind === 'system' }" @click="selectKind('system')">系统日志 · {{ (sysLogs || []).length }}</button><button type="button" :aria-pressed="activeKind === 'message'" aria-controls="msg-log-card" :class="{ active: activeKind === 'message' }" @click="selectKind('message')">消息日志 · {{ (msgLogs || []).length }}</button></div>
+    <log-panel v-show="activeKind === 'system'" id="sys-log-card" title="系统日志" description="最近记录" :logs="sysLogs" kind="system" panel-id="sys-log-panel" @clear="$emit('clear-sys-logs')" @export="$emit('export-sys-logs')"></log-panel>
+    <log-panel v-show="activeKind === 'message'" id="msg-log-card" title="消息日志" description="最近记录" :logs="msgLogs" kind="message" panel-id="msg-log-panel" @clear="$emit('clear-msg-logs')" @export="$emit('export-msg-logs')"></log-panel>
   </div>`
 };
 
 const GlobalFilters = {
-  props:["settings","rules","newRule"],
+  props:["settings","rules","newRule","saving"],
+  components:{ FieldGroup },
   data(){ return { previewText:"", previewFile:"", previewResult:null, previewBusy:false, previewVersion:0, typeLabels:{ sync_text:"文本", sync_photo:"图片", sync_video:"视频", sync_document:"文件", sync_audio:"音频", sync_voice:"语音", sync_sticker:"贴纸", sync_gif:"动图" } }; },
   computed:{ ruleCount(){ return (this.rules || []).length; } },
   watch:{
@@ -199,7 +220,7 @@ const GlobalFilters = {
       } finally { this.previewBusy = false; }
     }
   },
-  template:`<div class="space-y-4">
+  template:`<div class="filters-workspace">
     <div class="card">
       <div class="panel-heading"><div><h2 class="panel-title">要同步哪些内容</h2></div></div>
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4"><label v-for="(label, key) in typeLabels" :key="key" class="choice-card !p-2"><input type="checkbox" v-model="settings[key]" true-value="1" false-value="0"><span class="choice-title">{{ label }}</span></label></div>
@@ -208,13 +229,13 @@ const GlobalFilters = {
     <div class="card">
       <div class="panel-heading"><div><h2 class="panel-title">内容过滤（正则）</h2></div><span class="field-badge field-badge-muted">{{ ruleCount }} 条</span></div>
       <p class="field-hint mb-3">规则按列表顺序执行；相册中有一条被屏蔽，整组都会跳过。</p>
-      <div class="filter-form mb-4">
-        <select v-model="newRule.rule_type" aria-label="规则类型" class="input-box"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select>
-        <input v-model="newRule.pattern" maxlength="1000" type="text" aria-label="正则表达式" placeholder="例如：广告|推广" class="input-box font-mono">
-        <input v-if="newRule.rule_type === 'replace'" v-model="newRule.replacement" maxlength="1000" type="text" aria-label="替换内容" placeholder="替换为；留空则删除" class="input-box">
+      <fieldset class="filter-form mb-4" :disabled="saving" :aria-busy="saving">
+        <field-group label="规则类型"><select v-model="newRule.rule_type" class="input-box"><option value="replace">替换文本</option><option value="drop">屏蔽消息</option></select></field-group>
+        <field-group label="正则表达式"><input v-model="newRule.pattern" maxlength="1000" type="text" placeholder="例如：广告|推广" class="input-box font-mono"></field-group>
+        <field-group v-if="newRule.rule_type === 'replace'" label="替换内容" hint="留空则删除匹配到的文字"><input v-model="newRule.replacement" maxlength="1000" type="text" class="input-box"></field-group>
         <label class="identity-option text-xs text-slate-600"><input type="checkbox" v-model="newRule.is_case_sensitive" :true-value="1" :false-value="0">区分大小写</label>
-        <button @click="$emit('add-rule', newRule)" :disabled="!newRule.pattern" class="btn-primary">添加规则</button>
-      </div>
+        <button @click="$emit('add-rule', newRule)" :disabled="saving || !newRule.pattern" class="btn-primary">{{ saving ? '保存中…' : '添加规则' }}</button>
+      </fieldset>
       <details class="compact-details mb-4"><summary>试一下这条规则</summary><div class="form-surface">
         <p class="field-hint">只测试上方这条规则，不会保存或发送消息。带格式的文字按 HTML 匹配。</p>
         <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="预览文本" placeholder="粘贴一段示例文本…" class="input-box"></textarea>
@@ -225,7 +246,7 @@ const GlobalFilters = {
           <template v-else><p>{{ previewResult.dropped ? '这条消息会被跳过；同一相册也会一起跳过' : (previewResult.matched ? '替换后的内容' : '没有匹配到，内容不变') }}</p><pre v-if="!previewResult.dropped">{{ previewResult.text || '（空文本）' }}</pre></template>
         </div>
       </div></details>
-      <ul class="rule-scroll space-y-2 text-sm border-t border-slate-100 pt-4"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><span class="min-w-0 break-all font-mono text-xs"><span class="field-hint">{{ ['drop','skip_media'].includes(rule.rule_type) ? '屏蔽' : '替换' }}</span> {{ rule.pattern }} <span v-if="['replace','replace_text'].includes(rule.rule_type)" class="text-emerald-600">→ {{ rule.replacement || '(删除)' }}</span></span><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul>
+<ul class="rule-scroll"><li v-for="rule in rules" :key="rule.id" class="mapping-item"><div class="rule-copy"><span class="rule-kind">{{ ['drop','skip_media'].includes(rule.rule_type) ? '屏蔽消息' : '替换文本' }}</span><div class="rule-expression"><span>{{ rule.pattern }}</span><template v-if="['replace','replace_text'].includes(rule.rule_type)"><span class="rule-arrow" aria-hidden="true">→</span><span class="rule-replacement">{{ rule.replacement || '(删除)' }}</span></template></div></div><button @click="$emit('del-rule', rule.id)" class="delete-action">删除</button></li><li v-if="!(rules || []).length" class="empty-state">暂无规则</li></ul>
     </div>
   </div>`
 };
@@ -426,7 +447,7 @@ const SettingsPanel = {
                 :checked="config.proxy.enabled"
                 @update:checked="config.proxy.enabled = $event"
               ></toggle-field>
-              <div class="settings-grid settings-grid-md-2" :class="{ 'opacity-60': !config.proxy.enabled }">
+              <div class="settings-grid settings-grid-md-2" :class="{ 'settings-inactive': !config.proxy.enabled }">
                 <field-group label="代理地址">
                   <input v-model="config.proxy.host" type="text" class="input-box">
                 </field-group>
@@ -495,7 +516,7 @@ const SettingsPanel = {
               :checked="config.sync.bot_rate_limit_enabled"
               @update:checked="config.sync.bot_rate_limit_enabled = $event"
             ></toggle-field>
-            <div class="settings-grid settings-grid-md-3" :class="{ 'opacity-60': !config.sync.bot_rate_limit_enabled }">
+            <div class="settings-grid settings-grid-md-3" :class="{ 'settings-inactive': !config.sync.bot_rate_limit_enabled }">
               <field-group label="上传量上限（GB）">
                 <input v-model="config.sync.bot_rate_limit_gb" type="number" step="0.1" min="0.1" class="input-box">
               </field-group>
@@ -564,7 +585,7 @@ const SettingsPanel = {
 
 createApp({
   components:{ SetupWizard, StatusOverview, ChannelMapping, SyncPanel, LogViewer, SettingsPanel, GlobalFilters, ToastBanner },
-  data(){ return { syncStarting:false, bootstrapReady:false, connectionState:"connecting", lastStatusAt:0, connectionTimer:null, lastSyncParams:null, currentView:"home", appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false, theme:"clover" } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuthRevision:0, userAuth:{ status:"initializing", status_label:"正在连接", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
+  data(){ return { syncStarting:false, bootstrapReady:false, connectionState:"connecting", lastStatusAt:0, connectionTimer:null, lastSyncParams:null, currentView:"home", workspaceSection:["history","automatic","filters","logs"].includes(window.location?.hash?.slice(1)) ? window.location.hash.slice(1) : "history", workspaceLogsOpened:false, appInfo:{ bot:{}, user:{} }, mappings:{ mappings:[], grouped_mappings:[] }, filterRules:[], filterSaving:false, newFilter:{ rule_type:"replace", pattern:"", replacement:"", is_case_sensitive:0 }, settings:{ sync_text:"1", sync_photo:"1", sync_video:"1", sync_document:"1", sync_audio:"1", sync_voice:"1", sync_sticker:"1", sync_gif:"1" }, configForm:{ telegram:{ bot_token:"", extra_bot_tokens:"", api_id:"", api_hash:"", bot_api_base_url:"" }, proxy:{ enabled:false, host:"127.0.0.1", port:7897, username:"", password:"" }, server:{ host:"127.0.0.1", port:8011, auto_open_browser:true }, sync:{ default_delay:5, force_send:false, add_external_source_header:false, system_log_retention_limit:1000, message_log_retention_limit:5000, bot_upload_max_mb:50, bot_rate_limit_enabled:false, bot_rate_limit_gb:10, bot_rate_limit_window_hours:24, bot_rate_limit_cooldown_minutes:300, realtime_sender:"bot", realtime_fallback_to_user:true, realtime_hash_perturb:false }, app:{ portable_mode:true, log_level:"INFO", debug_terminal_logs:false, theme:"clover" } }, setupStatus:{ needs_setup:false }, syncForm:{ mode:"api", sender:"bot", source_id:"", target_id:"", start_id:"", end_id:"", json_path:"", json_source_username:"", json_media_group_window_seconds:3, delay:5, force_send:"0", hash_perturb:"0", clone_fallback_to_user:"1", target_type:"channel" }, syncStatus:{ is_syncing:false, mode:"", total:0, current:0, skipped:0 }, userAuthRevision:0, userAuth:{ status:"initializing", status_label:"正在连接", awaiting_code:false, awaiting_password:false, phone_number:"", password_hint:"", send_code_cooldown:0 }, versionInfo:{ status:"idle", current_version:"", latest_version:"", up_to_date:false, url:"https://github.com/RRHTY/tg-channel-sync" }, sendCodeCooldown:0, sendCodeTimer:null, authSubmitting:false, stopping:false, serverAction:"", restartPolling:null, sysLogs:[], msgLogs:[], sseConnection:null, configSaving:false, notice:{ message:"", type:"info" }, noticeTimer:null }; },
   async mounted(){
     this.startSendCodeTimer();
     try {
