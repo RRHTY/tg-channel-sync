@@ -6,6 +6,7 @@ from aiogram.types import FSInputFile
 from aiogram.types import InputMediaVideo as AioVideo
 from aiogram.types import ReplyParameters
 from pyrogram.enums import ParseMode
+from pyrogram.methods.messages.copy_media_group import CopyMediaGroup
 
 import bot_engine
 import database as db
@@ -121,6 +122,24 @@ async def _media_group_should_drop(group, mode: str) -> bool:
         if should_skip:
             return True
     return False
+
+
+class _SelectedMediaGroupClient:
+    def __init__(self, app, group):
+        self._app = app
+        self._group = group
+
+    def __getattr__(self, name):
+        return getattr(self._app, name)
+
+    async def get_media_group(self, *args, **kwargs):
+        return self._group
+
+
+async def _copy_selected_api_media_group(app, group, **kwargs):
+    # 单次调用使用独立视图，不修改共享 Client；SDK 只能看到选中的相册成员。
+    # copy_media_group 的 file_id 路径会正确传递 spoiler，send_media_group 当前不会。
+    return await CopyMediaGroup.copy_media_group(_SelectedMediaGroupClient(app, group), **kwargs)
 
 
 def _build_api_media_group_copy_kwargs(
@@ -696,7 +715,7 @@ async def sync_media_group(
                     quote_data,
                 )
                 copied_msgs = list(await execute_with_network_retry(
-                    lambda: app.copy_media_group(**kwargs),
+                    lambda: _copy_selected_api_media_group(app, group, **kwargs),
                     action_label=f"API 媒体组复制 {group[0].id}",
                     sync_state=sync_state,
                     log_tag="SYNC_NETWORK_RETRY",
@@ -1046,6 +1065,52 @@ def group_messages(messages):
     return grouped_msgs
 
 
+async def _iter_history_message_groups(app, source_id, start_id, end_id, mode, settings, outcome):
+    pending_album = []
+    for chunk_start in range(start_id, end_id + 1, 100):
+        if sync_state["stop_requested"]:
+            return
+        chunk_end = min(chunk_start + 99, end_id)
+        try:
+            messages = await _safe_get_messages(
+                app=app, source_id=source_id, msg_ids=list(range(chunk_start, chunk_end + 1)),
+            )
+        except SyncNetworkRetryExhaustedError:
+            raise
+        except Exception as exc:
+            if sync_state.get("stop_requested"):
+                return
+            outcome.failed_batches += 1
+            # 中间一批读取失败时，不能把尚未读完整的相册当成完整发送。
+            outcome.record(SYNC_RESULT_FAILED, len(pending_album))
+            pending_album = []
+            await log_sync_error(f"读取消息失败 {chunk_start}-{chunk_end}", exc)
+            continue
+        if sync_state["stop_requested"]:
+            return
+
+        selected = []
+        for msg in sorted((item for item in messages if item is not None and not item.empty),
+                          key=lambda item: item.id):
+            if not chunk_start <= msg.id <= chunk_end:
+                continue
+            _, sync_key = get_msg_meta(msg, mode)
+            if settings.get(sync_key, "1") == "0":
+                outcome.record(SYNC_RESULT_SKIPPED)
+                continue
+            selected.append(msg)
+
+        groups = group_messages(pending_album + selected)
+        pending_album = []
+        if chunk_end < end_id and groups and groups[-1][0].media_group_id:
+            # 批末相册留到下一批确认结束，避免同一相册被拆成两次发送。
+            pending_album = groups.pop()
+        for group in groups:
+            if sync_state["stop_requested"]:
+                return
+            yield group
+
+
 async def process_master_sync(
     mode: str,
     sender: str,
@@ -1148,67 +1213,45 @@ async def _run_master_sync(
                 end_id = 1
             sync_state["total"] = end_id - start_id + 1
 
-            for chunk_start in range(start_id, end_id + 1, 100):
+            async for group in _iter_history_message_groups(
+                app, source_id, start_id, end_id, mode, settings, outcome,
+            ):
                 if sync_state["stop_requested"]:
                     break
-                try:
-                    msgs = await _safe_get_messages(source_id=source_id, app=app, msg_ids=list(range(chunk_start, min(chunk_start + 99, end_id) + 1)))
-                except SyncNetworkRetryExhaustedError:
-                    raise
-                except Exception as exc:
-                    if sync_state.get("stop_requested"):
-                        break
-                    outcome.failed_batches += 1
-                    await log_sync_error(f"读取消息失败 {chunk_start}-{min(chunk_start + 99, end_id)}", exc)
-                    continue
-
-                filtered_msgs = []
-                for msg in msgs:
-                    if msg is None or msg.empty:
-                        continue
-                    msg_type, sync_key = get_msg_meta(msg, mode)
-                    if settings.get(sync_key, "1") == "0":
-                        outcome.record("skipped")
-                        continue
-                    filtered_msgs.append(msg)
-
-                for group in group_messages(filtered_msgs):
-                    if sync_state["stop_requested"]:
-                        break
-                    if len(group) == 1:
-                        result = await sync_single_message(
-                            mode,
-                            sender,
-                            app,
-                            bot,
-                            source_id,
-                            target_id,
-                            group[0],
-                            safe_delay,
-                            force_send,
-                            hash_perturb=hash_perturb,
-                            clone_fallback_to_user=clone_fallback_to_user,
-                            include_external_source_header=include_external_source_header,
-                            chat_id=chat_id,
-                        )
-                    else:
-                        result = await sync_media_group(
-                            mode,
-                            sender,
-                            app,
-                            bot,
-                            source_id,
-                            target_id,
-                            group,
-                            safe_delay,
-                            force_send,
-                            hash_perturb=hash_perturb,
-                            clone_fallback_to_user=clone_fallback_to_user,
-                            include_external_source_header=include_external_source_header,
-                            chat_id=chat_id,
-                        )
-                    if result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested"):
-                        outcome.record(result, len(group))
+                if len(group) == 1:
+                    result = await sync_single_message(
+                        mode,
+                        sender,
+                        app,
+                        bot,
+                        source_id,
+                        target_id,
+                        group[0],
+                        safe_delay,
+                        force_send,
+                        hash_perturb=hash_perturb,
+                        clone_fallback_to_user=clone_fallback_to_user,
+                        include_external_source_header=include_external_source_header,
+                        chat_id=chat_id,
+                    )
+                else:
+                    result = await sync_media_group(
+                        mode,
+                        sender,
+                        app,
+                        bot,
+                        source_id,
+                        target_id,
+                        group,
+                        safe_delay,
+                        force_send,
+                        hash_perturb=hash_perturb,
+                        clone_fallback_to_user=clone_fallback_to_user,
+                        include_external_source_header=include_external_source_header,
+                        chat_id=chat_id,
+                    )
+                if result != SYNC_RESULT_FAILED or not sync_state.get("stop_requested"):
+                    outcome.record(result, len(group))
         else:
             await process_json_sync(
                 sender,
