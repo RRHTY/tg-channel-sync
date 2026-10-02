@@ -47,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "log_level": "INFO",
         "debug_terminal_logs": False,
         "theme": "clover",
+        "page_layout": "single",
     },
 }
 
@@ -154,6 +155,8 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     app["debug_terminal_logs"] = _normalize_bool(app.get("debug_terminal_logs", False))
     theme = _normalize_str(app.get("theme", "clover"), "clover").lower()
     app["theme"] = theme if theme in {"clover", "sakura", "mint", "starlight"} else "clover"
+    page_layout = _normalize_str(app.get("page_layout", "single"), "single").lower()
+    app["page_layout"] = page_layout if page_layout in {"single", "sidebar"} else "single"
     return merged
 
 

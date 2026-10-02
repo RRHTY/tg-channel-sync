@@ -1300,6 +1300,16 @@ textarea.input-box {
 :root .workspace-body,
 :root .workspace-pane { min-width: 0; }
 :root .workspace-pane { scroll-margin-top: 110px; }
+:root .workspace-layout-single { grid-template-columns: minmax(0, 1fr); }
+:root .workspace-layout-single .workspace-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+}
+@media (min-width: 1280px) {
+    :root .workspace-layout-single .workspace-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 :root .workspace-body .card {
     margin-bottom: 0;
     padding: 28px;

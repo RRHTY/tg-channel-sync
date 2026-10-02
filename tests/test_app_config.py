@@ -10,7 +10,9 @@ from server_runtime import resolve_server_config
 
 class AppConfigTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        temp_root = Path(__file__).resolve().parents[1] / "temp"
+        temp_root.mkdir(exist_ok=True)
+        self.temp_dir = tempfile.TemporaryDirectory(dir=temp_root)
         self.config_path = Path(self.temp_dir.name) / "config.json"
         self.original_config_file = app_config.config_file
         self.original_ensure_dirs = app_config.ensure_runtime_dirs
@@ -105,6 +107,52 @@ class AppConfigTests(unittest.TestCase):
         config = app_config.save_config({"app": {"theme": "unknown"}})
 
         self.assertEqual(config["app"]["theme"], "clover")
+
+    def test_page_layout_defaults_to_single_for_new_config(self):
+        config = app_config.get_config()
+
+        self.assertEqual(config["app"]["page_layout"], "single")
+        on_disk = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["app"]["page_layout"], "single")
+
+    def test_old_config_defaults_to_single_without_rewriting(self):
+        raw = {"telegram": {"bot_token": "abc"}, "app": {"theme": "mint"}}
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        original_content = self.config_path.read_text(encoding="utf-8")
+
+        loaded = app_config.load_config()
+
+        self.assertEqual(loaded["app"]["page_layout"], "single")
+        self.assertEqual(loaded["app"]["theme"], "mint")
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), original_content)
+
+    def test_page_layout_normalizes_supported_values(self):
+        for value, expected in (
+            ("single", "single"),
+            ("sidebar", "sidebar"),
+            ("  SINGLE  ", "single"),
+            ("\tSiDeBaR\n", "sidebar"),
+        ):
+            with self.subTest(value=value):
+                saved = app_config.save_config({"app": {"page_layout": value}})
+                self.assertEqual(saved["app"]["page_layout"], expected)
+
+    def test_page_layout_invalid_values_fall_back_to_single(self):
+        for value in ("unknown", "", None, 1, False):
+            with self.subTest(value=value):
+                saved = app_config.save_config({"app": {"page_layout": value}})
+                self.assertEqual(saved["app"]["page_layout"], "single")
+
+    def test_page_layout_survives_save_and_reload(self):
+        for layout in ("sidebar", "single"):
+            with self.subTest(layout=layout):
+                app_config.save_config({"app": {"page_layout": layout, "theme": "sakura"}})
+                app_config.clear_config_cache()
+
+                loaded = app_config.get_config()
+
+                self.assertEqual(loaded["app"]["page_layout"], layout)
+                self.assertEqual(loaded["app"]["theme"], "sakura")
 
     def test_debug_terminal_logs_normalizes_to_bool(self):
         config = app_config.save_config({"app": {"debug_terminal_logs": 1}})

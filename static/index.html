@@ -14,7 +14,7 @@
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="/static/app.css?v=7">
+    <link rel="stylesheet" href="/static/app.css?v=8">
 </head>
 <body class="text-gray-800 font-sans">
 <div id="app" class="app-shell">
@@ -76,8 +76,8 @@
 
     <div v-if="currentView !== 'setup'" v-show="currentView === 'home'" class="home-workspaces">
         <status-overview :app-info="appInfo" :status="syncStatus" @open-settings="openSettings" @open-history="selectWorkspace('history')"></status-overview>
-        <div class="workspace-layout">
-            <nav class="workspace-nav" aria-label="同步工作区">
+        <div class="workspace-layout" :class="{ 'workspace-layout-single': isSinglePage }">
+            <nav v-show="!isSinglePage" class="workspace-nav" aria-label="同步工作区">
                 <button type="button" class="workspace-link" :aria-current="workspaceSection === 'history' ? 'true' : undefined" aria-controls="workspace-history" @click="selectWorkspace('history')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2-5.3M4 4v6h6M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>历史同步</span></button>
                 <button type="button" class="workspace-link" :aria-current="workspaceSection === 'automatic' ? 'true' : undefined" aria-controls="workspace-automatic" @click="selectWorkspace('automatic')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 7h14m-4-4 4 4-4 4M19 17H5m4-4-4 4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>自动同步</span><small>{{ (mappings.mappings || []).length }}</small></button>
                 <button type="button" class="workspace-link" :aria-current="workspaceSection === 'filters' ? 'true' : undefined" aria-controls="workspace-filters" @click="selectWorkspace('filters')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z" stroke-linecap="round" stroke-linejoin="round"/></svg><span>内容过滤</span><small>{{ filterRules.length }}</small></button>
@@ -85,16 +85,16 @@
                 <button v-if="syncStatus.is_syncing" type="button" class="workspace-task" @click="selectWorkspace('history')">任务运行中<small>{{ syncStatus.current }} / {{ syncStatus.total }}</small></button>
             </nav>
             <main class="workspace-body">
-                <section id="workspace-history" class="workspace-pane" v-show="workspaceSection === 'history'" aria-label="历史同步">
+                <section id="workspace-history" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'history'" aria-label="历史同步">
                     <sync-panel :connected="connectionState === 'connected'" :has-last-params="!!lastSyncParams" @restore="restoreLastSyncParams" @forget="clearLastSyncParams" :user-auth="userAuth" @open-settings="openSettings" @open-logs="selectWorkspace('logs')" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
                 </section>
-                <section id="workspace-automatic" class="workspace-pane" v-show="workspaceSection === 'automatic'" aria-label="自动同步">
+                <section id="workspace-automatic" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'automatic'" aria-label="自动同步">
                     <channel-mapping :mappings="mappings" :save-mapping="addMapping" :update-mapping="updateMapping" @use="useMapping" @del="deleteMapping" @log-error="showAppError"></channel-mapping>
                 </section>
-                <section id="workspace-filters" class="workspace-pane" v-show="workspaceSection === 'filters'" aria-label="内容过滤">
+                <section id="workspace-filters" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'filters'" aria-label="内容过滤">
                     <global-filters :settings="settings" :rules="filterRules" :new-rule="newFilter" :saving="filterSaving" @save-settings="saveGlobalSettings" @add-rule="addFilter" @del-rule="deleteFilter"></global-filters>
                 </section>
-                <section id="workspace-logs" class="workspace-pane" v-show="workspaceSection === 'logs'" aria-label="运行日志">
+                <section id="workspace-logs" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'logs'" aria-label="运行日志">
                     <log-viewer :sys-logs="sysLogs" :msg-logs="msgLogs" @clear-sys-logs="clearSystemLogs" @clear-msg-logs="clearMessageLogs" @export-sys-logs="exportSystemLogs" @export-msg-logs="exportMessageLogs"></log-viewer>
                 </section>
             </main>
@@ -111,7 +111,7 @@
 </div>
 <script src="/static/ui-components.js?v=7"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js?v=9"></script>
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app-methods.js?v=10"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>

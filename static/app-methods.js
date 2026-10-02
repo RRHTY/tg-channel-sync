@@ -37,8 +37,10 @@
       this.syncForm.json_media_group_window_seconds = Number(this.syncForm.json_media_group_window_seconds || 3);
       if (this.syncStatus?.is_syncing) this.syncModeFromStatus(this.syncStatus);
       this.currentView = this.setupStatus.needs_setup ? "setup" : "home";
+      if (this.currentView === "setup") this.workspaceLogsOpened = false;
       this.loadLastSyncParams();
       this.bootstrapReady = true;
+      if (this.currentView === "home" && this.workspaceSection !== "history") this.selectWorkspace(this.workspaceSection);
     },
     navButtonClass(view) {
       return this.currentView === view ? "nav-active" : "nav-idle";
@@ -54,7 +56,10 @@
     },
     navigateTo(view) {
       this.currentView = view;
-      this.$nextTick(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+      this.$nextTick(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        if (view === "home" && this.isSinglePage && !this.workspaceLogsOpened) this.scrollLogsToBottom();
+      });
     },
     selectWorkspace(section) {
       if (!["history", "automatic", "filters", "logs"].includes(section)) return;
@@ -62,10 +67,14 @@
       this.currentView = "home";
       history.replaceState(null, "", location.pathname + location.search + "#" + section);
       this.$nextTick(() => {
-        const heading = document.getElementById("workspace-" + section)?.querySelector("h2");
+        const panel = document.getElementById("workspace-" + section);
+        const heading = panel?.querySelector("h2");
         if (heading) {
           heading.tabIndex = -1;
           heading.focus({ preventScroll: true });
+        }
+        if (this.isSinglePage) {
+          panel?.scrollIntoView({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth" });
         }
         if (section === "logs" && !this.workspaceLogsOpened) {
           this.workspaceLogsOpened = true;
@@ -100,6 +109,8 @@
       this.navigateTo("settings");
     },
     normalizeConfigForm() {
+      const layout = String(this.configForm.app.page_layout || "single").trim().toLowerCase();
+      this.configForm.app.page_layout = layout === "sidebar" ? "sidebar" : "single";
       if (!this.configForm.telegram.api_id) this.configForm.telegram.api_id = "";
       this.configForm.telegram.extra_bot_tokens = Array.isArray(this.configForm.telegram.extra_bot_tokens)
         ? this.configForm.telegram.extra_bot_tokens.join("\n")
@@ -204,8 +215,14 @@
       const { sys = true, msg = true } = options;
       const sysPanel = document.getElementById("sys-log-panel");
       const msgPanel = document.getElementById("msg-log-panel");
-      if (sys && sysPanel?.getClientRects().length) sysPanel.scrollTop = sysPanel.scrollHeight;
-      if (msg && msgPanel?.getClientRects().length) msgPanel.scrollTop = msgPanel.scrollHeight;
+      if (sys && sysPanel?.getClientRects().length) {
+        sysPanel.scrollTop = sysPanel.scrollHeight;
+        this.workspaceLogsOpened = true;
+      }
+      if (msg && msgPanel?.getClientRects().length) {
+        msgPanel.scrollTop = msgPanel.scrollHeight;
+        this.workspaceLogsOpened = true;
+      }
     },
     setupSSE() {
       this.serverAction = "";
@@ -402,7 +419,7 @@
       Object.assign(this.syncForm, { mode: "api", source_id: String(item.source_id), target_id: String(item.target_id), target_type: item.target_type, force_send: "0" });
       this.selectWorkspace("history");
       this.$nextTick(() => {
-        document.getElementById("history-sync")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (!this.isSinglePage) document.getElementById("history-sync")?.scrollIntoView({ behavior: "smooth", block: "start" });
         document.querySelector("#history-sync .sync-range input")?.focus({ preventScroll: true });
       });
       this.showToast("已填入源和目标，请检查范围后启动");
