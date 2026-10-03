@@ -389,7 +389,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             mock_download.assert_awaited()
-            mock_record_success.assert_awaited_once_with(-100123, -100456, 7, 101, force_send=False)
+        mock_record_success.assert_awaited_once_with(-100123, -100456, 7, 101, force_send=False, owner_user_id=0)
 
     async def test_sync_media_group_api_topics_error_does_not_record_zero_mapping(self):
         group = [
@@ -479,7 +479,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, history.SYNC_RESULT_SENT_UNMAPPED)
-        mock_record_success.assert_awaited_once_with(-100123, -100456, 1, 101, force_send=False)
+        mock_record_success.assert_not_awaited()
         mock_count_unmapped.assert_called_once_with()
 
     async def test_sync_media_group_drop_filter_blocks_whole_group(self):

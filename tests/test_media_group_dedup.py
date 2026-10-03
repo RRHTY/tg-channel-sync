@@ -25,6 +25,9 @@ class MediaGroupDedupTests(unittest.IsolatedAsyncioTestCase):
         stack.enter_context(patch.object(history.db, "is_message_synced", AsyncMock(
             side_effect=lambda source, msg, target: msg in saved,
         )))
+        stack.enter_context(patch.object(history.db, "get_message_delivery", AsyncMock(return_value=None)))
+        stack.enter_context(patch.object(history.db, "prepare_message_delivery", AsyncMock()))
+        stack.enter_context(patch.object(history.db, "mark_message_delivery_unconfirmed", AsyncMock()))
         stack.enter_context(patch.object(history.db, "add_msg_log", AsyncMock()))
         stack.enter_context(patch.object(history.db, "apply_message_filters", AsyncMock(
             side_effect=lambda text, *_: (blocked and text == "blocked", text),

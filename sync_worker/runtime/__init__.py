@@ -1,4 +1,7 @@
 from .state import (
+    DeliveryGuard,
+    SyncDeliveryPendingError,
+    SyncMappingPersistenceError,
     TEMP_DIR,
     clear_temp_dir_files,
     count_unmapped_group,
@@ -10,6 +13,9 @@ from .state import (
 )
 
 __all__ = [
+    "DeliveryGuard",
+    "SyncDeliveryPendingError",
+    "SyncMappingPersistenceError",
     "TEMP_DIR",
     "clear_temp_dir_files",
     "count_unmapped_group",

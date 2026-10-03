@@ -43,6 +43,9 @@ from ..core import (
 )
 from ..media import describe_hash_perturb_reason, prepare_media_for_send
 from ..runtime import (
+    DeliveryGuard,
+    SyncDeliveryPendingError,
+    SyncMappingPersistenceError,
     TEMP_DIR,
     clear_temp_dir_files,
     count_unmapped_group,
@@ -77,6 +80,49 @@ SYNC_RESULT_SENT_MAPPED = "sent_mapped"
 SYNC_RESULT_SENT_UNMAPPED = "sent_unmapped"
 SYNC_RESULT_SKIPPED = "skipped"
 SYNC_RESULT_FAILED = "failed"
+
+
+class _UnconfirmedSendResultError(RuntimeError):
+    pass
+
+
+def _sent_message_id(message, sender="user"):
+    msg_id = getattr(message, "message_id" if sender == "bot" else "id", None)
+    if not isinstance(msg_id, int) or msg_id <= 0:
+        raise _UnconfirmedSendResultError("发送未返回有效目标消息 ID")
+    return msg_id
+
+
+def _cleanup_group_files(downloaded_files, thumbnail_paths):
+    for path in [path for _, path in downloaded_files] + list(thumbnail_paths.values()):
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+async def _report_pending_delivery(mode, source_id, target_id, msg_ids, reason):
+    sync_state["current_text"] = f"消息 {msg_ids} 的发送结果待核对"
+    await db.add_msg_log(
+        f"{mode.upper()}_SEND_UNCONFIRMED",
+        f"源:[{source_id}] 消息ID:{msg_ids} | 目标:[{target_id}] | {reason}，请先核对目标；强制重发可覆盖此记录",
+    )
+    return SYNC_RESULT_SENT_UNMAPPED
+
+
+async def _confirm_media_group(delivery, group, sent_msgs, *, sender="user", force_send=False):
+    sent_msgs = list(sent_msgs or [])
+    ids = [getattr(item, "message_id" if sender == "bot" else "id", None) for item in sent_msgs]
+    if (len(ids) != len(group) or any(not isinstance(msg_id, int) or msg_id <= 0 for msg_id in ids)
+            or len(set(ids)) != len(ids)):
+        await delivery.mark_unconfirmed(f"源组 {len(group)} 项，回包 {len(ids)} 项，无法完整确认对应关系")
+        count_unmapped_group()
+        return await _report_pending_delivery("group", delivery.source_id, delivery.target_id, delivery.msg_ids, "回包不完整")
+    for original, target_msg_id in zip(group, ids):
+        await record_success(delivery.source_id, delivery.target_id, original.id, target_msg_id,
+                             force_send=force_send, owner_user_id=delivery.owner_user_id)
+    return SYNC_RESULT_SENT_MAPPED
 
 
 def _normalize_sync_html(mode: str, html_text: str | None) -> str:
@@ -347,8 +393,13 @@ async def sync_single_message(
     should_skip, new_html = await db.apply_message_filters(text_html, has_media, file_name or "")
     if should_skip or (not has_media and not new_html.strip()):
         return SYNC_RESULT_SKIPPED
-    if not _state_checked and await update_state_and_check_skip(source_id, target_id, msg.id, new_html[:50] or "[媒体]", force_send=force_send):
-        return SYNC_RESULT_SKIPPED
+    try:
+        if not _state_checked and await update_state_and_check_skip(source_id, target_id, msg.id, new_html[:50] or "[媒体]", force_send=force_send):
+            return SYNC_RESULT_SKIPPED
+    except SyncDeliveryPendingError as exc:
+        return await _report_pending_delivery(mode, source_id, target_id, exc.msg_ids, "上次发送结果待确认，已阻止自动重发")
+    delivery = DeliveryGuard(source_id, target_id, [msg.id], force_send)
+    app, bot = delivery.wrap_client(app), delivery.wrap_client(bot)
 
     reply_to_id = await resolve_reply_target(source_id, target_id, get_reply_source_msg_id(msg, mode), mode.upper(), msg.id)
     link_context = await build_link_rewrite_context(
@@ -364,6 +415,8 @@ async def sync_single_message(
     if rewrite_count:
         await db.add_msg_log(f"{mode.upper()}_LINK_REWRITE", f"原始:[{source_id}] 消息ID:{msg.id} | 命中 {rewrite_count} 个链接改写")
 
+    file_path = None
+    thumbnail_path = None
     try:
         if mode == "api":
             if quote_data and reply_to_id:
@@ -377,14 +430,14 @@ async def sync_single_message(
                     }
                     if quote_data.get("entities"):
                         kwargs["quote_entities"] = quote_data["entities"]
-                    sent_id = (
+                    sent_id = _sent_message_id(
                         await execute_with_network_retry(
                             lambda: app.send_message(**kwargs),
                             action_label=f"API 文本发送 {msg.id}",
                             sync_state=sync_state,
                             log_tag="SYNC_NETWORK_RETRY",
                         )
-                    ).id
+                    )
                 else:
                     media_ref = get_media_reference(msg, msg_type)
                     if not media_ref:
@@ -399,7 +452,7 @@ async def sync_single_message(
                         quote_data,
                         has_spoiler=media_has_spoiler,
                     )
-                    sent_id = sent.id
+                    sent_id = _sent_message_id(sent)
                 await db.add_msg_log("API_QUOTE_SEND", f"原始:[{source_id}] 消息ID:{msg.id} | 已按引用回复发送")
             elif new_html != text_html or include_external_source_header or text_has_spoiler or media_has_spoiler:
                 # 如果文本发生变化，或者启用了外部来源前缀功能，使用 send_message/copy_message with caption
@@ -408,42 +461,42 @@ async def sync_single_message(
                     kwargs = {"chat_id": chat_id, "text": new_html, "parse_mode": ParseMode.HTML}
                     if reply_to_id:
                         kwargs["reply_to_message_id"] = reply_to_id
-                    sent_id = (
+                    sent_id = _sent_message_id(
                         await execute_with_network_retry(
                             lambda: app.send_message(**kwargs),
                             action_label=f"API 文本发送 {msg.id}",
                             sync_state=sync_state,
                             log_tag="SYNC_NETWORK_RETRY",
                         )
-                    ).id
+                    )
                 elif media_has_spoiler:
                     media_ref = get_media_reference(msg, msg_type)
                     if not media_ref:
                         raise ValueError(f"媒体遮罩消息缺少可复用 file_id: {msg.id}")
                     sent = await _send_api_media(app, msg_type, chat_id, media_ref, new_html, reply_to_id, has_spoiler=True)
-                    sent_id = sent.id
+                    sent_id = _sent_message_id(sent)
                 else:
                     kwargs = _add_reply_kwargs(_base_api_copy_kwargs(chat_id, source_id, msg.id), reply_to_id)
                     kwargs.update({"caption": new_html, "parse_mode": ParseMode.HTML})
-                    sent_id = (
+                    sent_id = _sent_message_id(
                         await execute_with_network_retry(
                             lambda: app.copy_message(**kwargs),
                             action_label=f"API 复制消息 {msg.id}",
                             sync_state=sync_state,
                             log_tag="SYNC_NETWORK_RETRY",
                         )
-                    ).id
+                    )
             else:
                 kwargs = _base_api_copy_kwargs(chat_id, source_id, msg.id)
                 _add_reply_kwargs(kwargs, reply_to_id)
-                sent_id = (
+                sent_id = _sent_message_id(
                     await execute_with_network_retry(
                         lambda: app.copy_message(**kwargs),
                         action_label=f"API 复制消息 {msg.id}",
                         sync_state=sync_state,
                         log_tag="SYNC_NETWORK_RETRY",
                     )
-                ).id
+                )
         else:
             if not has_media:
                 sent = await _execute_with_clone_retry_interruptibly(
@@ -460,7 +513,7 @@ async def sync_single_message(
                     action_label=f"单条消息 {msg.id}",
                     stop_client=app if sender != "bot" else None,
                 )
-                sent_id = sent.message_id if sender == "bot" else sent.id
+                sent_id = _sent_message_id(sent, sender)
             else:
                 file_path = None
                 for _ in range(3):
@@ -476,6 +529,8 @@ async def sync_single_message(
                         if file_path:
                             break
                     except Exception as exc:
+                        if _is_topics_parse_error(exc) or isinstance(exc, _UnconfirmedSendResultError):
+                            raise
                         if "STOP_REQUESTED" in str(exc):
                             raise
                         if isinstance(exc, SyncNetworkRetryExhaustedError):
@@ -523,7 +578,7 @@ async def sync_single_message(
                         thumbnail_arg = FSInputFile(thumbnail_path) if actual_sender == "bot" and thumbnail_path and os.path.exists(thumbnail_path) else thumbnail_path
                         sent = await _execute_with_clone_retry_interruptibly(
                             lambda: dynamic_send(
-                                client,
+                                delivery.wrap_client(client),
                                 msg_type,
                                 chat_id,
                                 media_arg,
@@ -538,11 +593,13 @@ async def sync_single_message(
                             action_label=f"单条媒体 {msg.id}",
                             stop_client=client if actual_sender != "bot" else None,
                         )
-                        sent_id = sent.message_id if actual_sender == "bot" else sent.id
+                        sent_id = _sent_message_id(sent, actual_sender)
                         if actual_sender == "bot":
                             await bot_engine.note_upload_success(client, file_size)
                         break
                     except Exception as exc:
+                        if _is_topics_parse_error(exc) or isinstance(exc, _UnconfirmedSendResultError):
+                            raise
                         if "STOP_REQUESTED" in str(exc):
                             raise
                         if isinstance(exc, SyncNetworkRetryExhaustedError):
@@ -615,9 +672,11 @@ async def sync_single_message(
                                 action_label=f"单条媒体辅助回退 {msg.id}",
                                 stop_client=app,
                             )
-                            sent_id = sent.id
+                            sent_id = _sent_message_id(sent)
                             break
                         except Exception as exc:
+                            if _is_topics_parse_error(exc) or isinstance(exc, _UnconfirmedSendResultError):
+                                raise
                             if "STOP_REQUESTED" in str(exc):
                                 raise
                             if isinstance(exc, SyncNetworkRetryExhaustedError):
@@ -636,13 +695,24 @@ async def sync_single_message(
                 if sent_id is None:
                     return SYNC_RESULT_FAILED
 
-        await record_success(source_id, target_id, msg.id, sent_id, force_send=force_send)
+        if not isinstance(sent_id, int) or sent_id <= 0:
+            await delivery.mark_unconfirmed("发送未返回有效目标消息 ID")
+            return await _report_pending_delivery(mode, source_id, target_id, [msg.id], "发送未返回有效消息 ID")
+        await record_success(source_id, target_id, msg.id, sent_id, force_send=force_send,
+                             owner_user_id=delivery.owner_user_id)
         if mode == "clone" and quote_data and reply_to_id:
             await db.add_msg_log("CLONE_QUOTE_SEND", f"原始:[{source_id}] 消息ID:{msg.id} | 已按引用回复发送")
         await db.add_msg_log(f"{mode.upper()}_SEND", f"原始:[{source_id}] 消息ID:{msg.id} | 目标:[{target_id}] 新ID:{sent_id} | 同步成功")
         result = SYNC_RESULT_SENT_MAPPED
     except Exception as exc:
+        if isinstance(exc, (SyncMappingPersistenceError, SyncDeliveryPendingError)):
+            raise
+        if _is_topics_parse_error(exc) or isinstance(exc, _UnconfirmedSendResultError):
+            _cleanup_group_files([(msg, file_path)] if file_path else [], {msg.id: thumbnail_path})
+            await delivery.mark_unconfirmed(str(exc))
+            return await _report_pending_delivery(mode, source_id, target_id, [msg.id], "回包解析失败")
         if mode == "api" and _is_chat_forwards_restricted(exc):
+            await delivery.release()
             raise RuntimeError("该频道不支持转发，请使用下载重传") from exc
         if isinstance(exc, SyncNetworkRetryExhaustedError):
             raise
@@ -673,12 +743,20 @@ async def sync_media_group(
     outcome: SyncResult | None = None,
 ):
     pending = []
+    unconfirmed = []
     for item in group:
-        if await update_state_and_check_skip(source_id, target_id, item.id, "[媒体组]", force_send=force_send):
-            if outcome is not None:
-                outcome.record(SYNC_RESULT_SKIPPED)
-        else:
-            pending.append(item)
+        try:
+            if await update_state_and_check_skip(source_id, target_id, item.id, "[媒体组]", force_send=force_send):
+                if outcome is not None:
+                    outcome.record(SYNC_RESULT_SKIPPED)
+            else:
+                pending.append(item)
+        except SyncDeliveryPendingError:
+            unconfirmed.append(item.id)
+    if unconfirmed:
+        if outcome is not None:
+            outcome.record(SYNC_RESULT_SENT_UNMAPPED, len(pending) + len(unconfirmed))
+        return await _report_pending_delivery(mode, source_id, target_id, unconfirmed, "上次发送结果待确认，已阻止整组自动重发")
     if not pending:
         return SYNC_RESULT_SKIPPED
     if await _media_group_should_drop(group, mode):
@@ -717,6 +795,8 @@ async def _send_media_group(
 ):
     if chat_id is None:
         chat_id = target_id
+    delivery = DeliveryGuard(source_id, target_id, [item.id for item in group], force_send)
+    app, bot = delivery.wrap_client(app), delivery.wrap_client(bot)
 
     reply_to_id = await resolve_reply_target(source_id, target_id, get_reply_source_msg_id(group[0], mode), mode.upper(), group[0].id)
     quote_data = get_quote_payload(group[0])
@@ -757,28 +837,22 @@ async def _send_media_group(
                     sync_state=sync_state,
                     log_tag="SYNC_NETWORK_RETRY",
                 ) or [])
-                for orig_m, new_m in zip(group, copied_msgs):
-                    await record_success(source_id, target_id, orig_m.id, new_m.id, force_send=force_send)
+                result = await _confirm_media_group(delivery, group, copied_msgs, force_send=force_send)
                 if len(copied_msgs) != len(group):
                     await db.add_msg_log(
                         "API_GROUP_PARTIAL",
                         f"原始:[{source_id}] 组首ID:{group[0].id} | 源组 {len(group)} 项，回包 {len(copied_msgs)} 项 | 未能完整确认映射",
                     )
-                    count_unmapped_group()
                 if captions_changed:
                     await db.add_msg_log("API_GROUP_CAPTION_REWRITE", f"原始:[{source_id}] 组首ID:{group[0].id} | 命中 {caption_rewrite_count} 个 caption 链接改写")
                 if quote_data and reply_to_id:
                     await db.add_msg_log("API_QUOTE_GROUP_SEND", f"原始:[{source_id}] 组首ID:{group[0].id} | 已按引用回复发送媒体组")
-                result = (
-                    SYNC_RESULT_SENT_MAPPED
-                    if len(copied_msgs) == len(group)
-                    else SYNC_RESULT_SENT_UNMAPPED
-                )
                 break
             except TypeError as exc:
                 # 只有确认是 Pyrofork 回包 topics 解析异常才认定"已发送"，
                 # 其余 TypeError（如参数构造错误）必须继续按失败处理，避免整组被静默丢弃。
                 if _is_topics_parse_error(exc):
+                    await delivery.mark_unconfirmed("topics 回包解析失败")
                     await db.add_msg_log(
                         "API_TOPICS_COMPAT",
                         f"原始:[{source_id}] 组首ID:{group[0].id} | 回包 topics 解析异常，可能已发送但未记录映射",
@@ -788,11 +862,14 @@ async def _send_media_group(
                     break
                 last_error = exc
             except Exception as exc:
+                if isinstance(exc, (SyncMappingPersistenceError, SyncDeliveryPendingError)):
+                    raise
                 if "STOP_REQUESTED" in str(exc):
                     raise
                 if isinstance(exc, SyncNetworkRetryExhaustedError):
                     raise
                 if _is_chat_forwards_restricted(exc):
+                    await delivery.release()
                     raise RuntimeError("该频道不支持转发，请使用下载重传") from exc
                 last_error = exc
                 await asyncio.sleep(2)
@@ -937,31 +1014,34 @@ async def _send_media_group(
                     client,
                 )
                 sent_msgs = await _execute_with_clone_retry_interruptibly(
-                    lambda: client.send_media_group(**send_kwargs),
+                    lambda: delivery.wrap_client(client).send_media_group(**send_kwargs),
                     action_label=f"媒体组 {group[0].id}",
                     stop_client=client if actual_sender != "bot" else None,
                 )
-                for orig_m, new_m in zip(group, sent_msgs):
-                    await record_success(source_id, target_id, orig_m.id, new_m.message_id if actual_sender == "bot" else new_m.id, force_send=force_send)
+                result = await _confirm_media_group(delivery, group, sent_msgs, sender=actual_sender, force_send=force_send)
+                sent_group_success = True
                 if actual_sender == "bot":
                     await bot_engine.note_upload_success(client, sum(file_sizes))
-                sent_group_success = True
                 if captions_changed:
                     await db.add_msg_log("CLONE_GROUP_CAPTION_REWRITE", f"原始:[{source_id}] 组首ID:{group[0].id} | 命中 {caption_rewrite_count} 个 caption 链接改写")
                 if quote_data and reply_to_id:
                     await db.add_msg_log("CLONE_QUOTE_GROUP_SEND", f"原始:[{source_id}] 组首ID:{group[0].id} | 已按引用回复发送媒体组")
                 await db.add_msg_log(
                     "CLONE_GROUP_SEND",
-                    f"原始:[{source_id}] 组首ID:{group[0].id} | 目标:[{target_id}] 共 {len(group)} 项 | 同步成功",
+                    f"原始:[{source_id}] 组首ID:{group[0].id} | 目标:[{target_id}] 共 {len(group)} 项 | "
+                    + ("同步成功" if result == SYNC_RESULT_SENT_MAPPED else "发送结果待核对"),
                 )
-                result = SYNC_RESULT_SENT_MAPPED
                 break
             except Exception as exc:
+                if isinstance(exc, (SyncMappingPersistenceError, SyncDeliveryPendingError)):
+                    _cleanup_group_files(downloaded_files, thumbnail_paths)
+                    raise
                 if "STOP_REQUESTED" in str(exc):
                     raise
                 if isinstance(exc, SyncNetworkRetryExhaustedError):
                     raise
                 if actual_sender != "bot" and _is_topics_parse_error(exc):
+                    await delivery.mark_unconfirmed("topics 回包解析失败")
                     await db.add_msg_log(
                         "CLONE_TOPICS_COMPAT",
                         f"原始:[{source_id}] 组首ID:{group[0].id} | 辅助账号发送后返回 topics 解析异常，已停止重试避免重复发送",
@@ -1042,16 +1122,19 @@ async def _send_media_group(
                     action_label=f"媒体组辅助回退 {first_id}",
                     stop_client=app,
                 )
-                for orig_m, new_m in zip(group, sent_msgs):
-                    await record_success(source_id, target_id, orig_m.id, new_m.id, force_send=force_send)
+                result = await _confirm_media_group(delivery, group, sent_msgs, force_send=force_send)
                 await db.add_msg_log(
                     "CLONE_GROUP_SEND",
-                    f"原始:[{source_id}] 组首ID:{first_id} | 目标:[{target_id}] 共 {len(group)} 项 | 已改用辅助账号发送成功",
+                    f"原始:[{source_id}] 组首ID:{first_id} | 目标:[{target_id}] 共 {len(group)} 项 | "
+                    + ("已改用辅助账号发送成功" if result == SYNC_RESULT_SENT_MAPPED else "发送结果待核对"),
                 )
                 sent_group_success = True
-                result = SYNC_RESULT_SENT_MAPPED
             except Exception as exc:
+                if isinstance(exc, (SyncMappingPersistenceError, SyncDeliveryPendingError)):
+                    _cleanup_group_files(downloaded_files, thumbnail_paths)
+                    raise
                 if _is_topics_parse_error(exc):
+                    await delivery.mark_unconfirmed("topics 回包解析失败")
                     await db.add_msg_log(
                         "CLONE_TOPICS_COMPAT",
                         f"原始:[{source_id}] 组首ID:{first_id} | 改用辅助账号发送后返回 topics 解析异常，已停止重试避免重复发送",

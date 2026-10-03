@@ -8,6 +8,14 @@ from sync_worker.json_import import process as importer
 
 
 class SyncOutcomeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # 这些用例只验证结果汇总，不访问实际业务数据库。
+        for name, value in (("get_message_delivery", None), ("prepare_message_delivery", None),
+                            ("mark_message_delivery_unconfirmed", None), ("release_message_delivery", None)):
+            patcher = patch.object(history.db, name, AsyncMock(return_value=value))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     async def run_history(self, results, *, fetch_error=None, settings_error=None):
         messages = [SimpleNamespace(id=i, empty=False, media_group_id=None) for i in (1, 2)]
         with ExitStack() as stack:

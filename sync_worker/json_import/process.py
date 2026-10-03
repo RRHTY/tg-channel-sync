@@ -39,7 +39,10 @@ from ..core import (
     resolve_json_media,
 )
 from ..media import prepare_json_media_for_send
-from ..runtime import TEMP_DIR, count_unmapped_group, record_success, sync_state, update_state_and_check_skip
+from ..runtime import (
+    TEMP_DIR, DeliveryGuard, SyncDeliveryPendingError, SyncMappingPersistenceError,
+    count_unmapped_group, record_success, sync_state, update_state_and_check_skip,
+)
 from ..runtime.result import SyncResult
 from ..senders import build_bot_media_group, build_user_media_group
 from .grouping import _json_group_family, group_json_messages
@@ -64,6 +67,10 @@ HTML_TOKEN_RE = re.compile(r"<[^>]+>|[^<]+")
 HTML_TAG_NAME_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9-]*)")
 JSON_GROUP_SENT_UNMAPPED = "sent_unmapped"
 JSON_GROUP_SKIPPED = "skipped"
+
+
+class _JsonUnconfirmedSendResultError(RuntimeError):
+    pass
 
 
 def _pyro_file_ref(media_path: str) -> str:
@@ -258,10 +265,11 @@ async def _send_json_text_parts_via_user(chat_id, text_parts, reply_to_id):
                 **({"reply_to_message_id": part_reply_to_id} if part_reply_to_id else {}),
             ),
             action_label=f"文本消息 -> 辅助账号发送 {index + 1}/{len(text_parts)}",
+            retry_unknown_errors=False,
             stop_client=app,
         )
         if sent is None:
-            raise RuntimeError("文本分片发送未完成，部分内容可能已发送，请核对目标频道后重跑")
+            raise _JsonUnconfirmedSendResultError("文本发送未返回结果，请核对目标频道")
         if first_sent is None:
             first_sent = sent
     return first_sent
@@ -290,11 +298,13 @@ async def _send_json_text_via_bot(upload_target, sender, clone_fallback_to_user,
                     sync_state=sync_state,
                     log_tag="JSON_NETWORK_RETRY",
                 )
+                if sent is None:
+                    raise _JsonUnconfirmedSendResultError("文本发送未返回结果，请核对目标频道")
                 break
             except Exception as exc:
                 if sync_state["stop_requested"]:
                     raise
-                if isinstance(exc, SyncNetworkRetryExhaustedError):
+                if isinstance(exc, (SyncNetworkRetryExhaustedError, SyncDeliveryPendingError, SyncMappingPersistenceError, _JsonUnconfirmedSendResultError)):
                     raise
                 retry_after = _parse_retry_after_seconds(exc)
                 if retry_after is not None:
@@ -356,6 +366,7 @@ async def _send_json_single_via_user(chat_id, media_type, media_path, caption, r
             progress=build_pyro_progress_callback(tracker, file_label, total_bytes=os.path.getsize(media_path), client=app),
         ),
         action_label=f"消息 -> 辅助账号重传 [{os.path.basename(media_path)}]",
+        retry_unknown_errors=False,
         stop_client=app,
     )   
 
@@ -399,7 +410,7 @@ async def _send_json_group_via_user(group, chat_id, rewritten_captions, file_ent
             stop_client=app,
         )
     except Exception as exc:
-        if isinstance(exc, SyncNetworkRetryExhaustedError):
+        if isinstance(exc, (SyncNetworkRetryExhaustedError, SyncDeliveryPendingError, SyncMappingPersistenceError)):
             raise
         if _is_topics_parse_error(exc):
             await db.add_msg_log(
@@ -478,8 +489,20 @@ async def send_json_media_group(
     group_ids = [int(item.get("id") or 0) for item in group]
     first_msg = group[0]
     first_id = group_ids[0] if group_ids else 0
-    if await update_state_and_check_skip(source_scope_id, target_id, first_id, "[JSON媒体组]", force_send=force_send):
-        return JSON_GROUP_SKIPPED
+    try:
+        if not force_send:
+            pending_ids = []
+            for msg_id in group_ids:
+                if await db.get_message_delivery(source_scope_id, msg_id, target_id):
+                    pending_ids.append(msg_id)
+            if pending_ids:
+                raise SyncDeliveryPendingError(source_scope_id, target_id, pending_ids)
+        if await update_state_and_check_skip(source_scope_id, target_id, first_id, "[JSON媒体组]", force_send=force_send):
+            return JSON_GROUP_SKIPPED
+    except SyncDeliveryPendingError as exc:
+        await db.add_msg_log("JSON_GROUP_SEND_UNMAPPED", f"媒体组消息ID:{exc.msg_ids} | 发送结果待确认，请核对目标频道后决定是否强制重发")
+        count_unmapped_group()
+        return JSON_GROUP_SENT_UNMAPPED
 
     for item in group:
         item_id = int(item.get("id") or 0)
@@ -497,6 +520,7 @@ async def send_json_media_group(
 
     sent_ids = []
     prepared_temp_paths = []
+    delivery = None
 
     try:
         preparation = await _prepare_json_media_group(
@@ -523,6 +547,7 @@ async def send_json_media_group(
             "JSON",
             first_id,
         )
+        delivery = DeliveryGuard(source_scope_id, target_id, group_ids, force_send=force_send)
         file_sizes = [os.path.getsize(path) for _, path, _ in file_entries]
         upload_target = await _select_json_upload_target(
             sender,
@@ -533,7 +558,7 @@ async def send_json_media_group(
         sent_group = None
 
         if upload_target["sender"] == "user":
-            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
+            sent_group = await delivery.send(lambda: _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id))
         else:
             for _ in range(3):
                 if sync_state["stop_requested"]:
@@ -542,7 +567,7 @@ async def send_json_media_group(
                 tracker, media_list = build_bot_media_group(group_items, normalized_captions, {}, total_bytes, upload_target["label"], spoiler_flags)
                 try:
                     sent_group = await execute_with_network_retry(
-                        lambda: upload_target["client"].send_media_group(
+                        lambda: delivery.wrap_client(upload_target["client"]).send_media_group(
                             chat_id,
                             media_list,
                             reply_to_message_id=reply_to_id,
@@ -556,12 +581,12 @@ async def send_json_media_group(
                 except Exception as exc:
                     if sync_state["stop_requested"]:
                         raise
-                    if isinstance(exc, SyncNetworkRetryExhaustedError):
+                    if isinstance(exc, (SyncNetworkRetryExhaustedError, SyncDeliveryPendingError, SyncMappingPersistenceError)):
                         raise
                     if _is_request_entity_too_large(exc):
                         if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 上传体积超限，已改用辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await delivery.send(lambda: _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id))
                             break
                         raise
                     retry_after = _parse_retry_after_seconds(exc)
@@ -575,7 +600,7 @@ async def send_json_media_group(
                         )
                         if upload_target["sender"] == "user":
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 频控，已切换辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await delivery.send(lambda: _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id))
                             break
                         continue
                     if bot_engine.should_disable_upload_bot_for_error(exc):
@@ -588,34 +613,57 @@ async def send_json_media_group(
                         )
                         if upload_target["sender"] == "user":
                             await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | 当前 Bot 已失效，已切换辅助账号发送媒体组")
-                            sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
+                            sent_group = await delivery.send(lambda: _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id))
                             break
                         continue
                     raise
             if sent_group is None and not sync_state["stop_requested"] and _json_should_fallback_to_user(sender, clone_fallback_to_user):
                 await db.add_msg_log("JSON_FALLBACK", f"组首消息ID:{first_id} | Bot 发送失败，已改用辅助账号发送媒体组")
-                sent_group = await _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id)
+                sent_group = await delivery.send(lambda: _send_json_group_via_user(group, chat_id, rewritten_captions, file_entries, reply_to_id))
 
         if sent_group is None:
-            return None
+            if sync_state["stop_requested"]:
+                return None
+            await delivery.mark_unconfirmed("媒体组发送未返回结果")
+            await db.add_msg_log("JSON_GROUP_SEND_UNMAPPED", f"组首消息ID:{first_id} | 发送未返回结果，请核对目标频道")
+            count_unmapped_group()
+            return JSON_GROUP_SENT_UNMAPPED
         if sent_group == JSON_GROUP_SENT_UNMAPPED:
+            await delivery.mark_unconfirmed("媒体组发送后回包解析失败，消息 ID 待确认")
             await db.add_msg_log(
                 "JSON_GROUP_SEND_UNMAPPED",
                 f"组首消息ID:{first_id} | 共 {len(group)} 条 | 目标:[{target_id}] | 可能已发送，回包解析失败，未记录映射",
             )
             count_unmapped_group()
             return JSON_GROUP_SENT_UNMAPPED
-        for original_msg, sent_msg in zip(group, sent_group):
-            new_id = _get_sent_message_id(sent_msg)
-            sent_ids.append(new_id)
-            if new_id > 0:
-                await record_success(source_scope_id, target_id, int(original_msg.get("id") or 0), new_id, force_send=force_send)
+        sent_ids = [_get_sent_message_id(sent_msg) for sent_msg in sent_group] if isinstance(sent_group, (list, tuple)) else []
+        if (len(sent_ids) != len(group)
+                or any(not isinstance(new_id, int) or isinstance(new_id, bool) or new_id <= 0 for new_id in sent_ids)
+                or len(set(sent_ids)) != len(sent_ids)):
+            await delivery.mark_unconfirmed("媒体组回包数量或消息 ID 不完整，未记录映射")
+            await db.add_msg_log("JSON_GROUP_SEND_UNMAPPED", f"组首消息ID:{first_id} | 回包不完整，发送结果待确认，请核对目标频道")
+            count_unmapped_group()
+            return JSON_GROUP_SENT_UNMAPPED
+        for original_msg, new_id in zip(group, sent_ids):
+            await record_success(source_scope_id, target_id, int(original_msg.get("id") or 0), new_id,
+                force_send=force_send, owner_user_id=delivery.owner_user_id)
 
         await db.add_msg_log(
             "JSON_GROUP_SEND",
             f"组首消息ID:{first_id} | 共 {len(group)} 条 | 目标:[{target_id}] | 已按媒体组发送",
         )
         return sent_ids
+    except SyncDeliveryPendingError as exc:
+        await db.add_msg_log("JSON_GROUP_SEND_UNMAPPED", f"媒体组消息ID:{exc.msg_ids} | 发送结果待确认，请核对目标频道后决定是否强制重发")
+        count_unmapped_group()
+        return JSON_GROUP_SENT_UNMAPPED
+    except Exception as exc:
+        if delivery is not None and _is_topics_parse_error(exc):
+            await delivery.mark_unconfirmed(str(exc))
+            await db.add_msg_log("JSON_GROUP_SEND_UNMAPPED", f"组首消息ID:{first_id} | 发送后回包解析失败，请核对目标频道")
+            count_unmapped_group()
+            return JSON_GROUP_SENT_UNMAPPED
+        raise
     finally:
         for temp_path in prepared_temp_paths:
             try:
@@ -776,8 +824,13 @@ async def process_json_sync(
                 await db.add_msg_log("JSON_DROP_REGEX", f"消息ID:{msg_id} | 已被正则过滤拦截")
                 continue
 
-            if await update_state_and_check_skip(source_scope_id, target_id, msg_id, text[:50] or "[媒体]", force_send=force_send):
-                outcome.record("skipped")
+            try:
+                if await update_state_and_check_skip(source_scope_id, target_id, msg_id, text[:50] or "[媒体]", force_send=force_send):
+                    outcome.record("skipped")
+                    continue
+            except SyncDeliveryPendingError:
+                outcome.record("sent_unmapped")
+                await db.add_msg_log("JSON_SEND_UNMAPPED", f"消息ID:{msg_id} | 发送结果待确认，请核对目标频道后决定是否强制重发")
                 continue
             text, rewrite_count = await rewrite_message_links(text, source_scope_id, link_context)
             if rewrite_count:
@@ -791,6 +844,7 @@ async def process_json_sync(
                 "JSON",
                 msg_id,
             )
+            delivery = DeliveryGuard(source_scope_id, target_id, [msg_id], force_send=force_send)
 
             try:
                 if media_path and not os.path.exists(media_path):
@@ -810,7 +864,7 @@ async def process_json_sync(
                         )
 
                         if upload_target["sender"] == "user":
-                            sent = await _send_json_single_via_user(
+                            sent = await delivery.send(lambda: _send_json_single_via_user(
                                 chat_id,
                                 media_type,
                                 media_path,
@@ -819,7 +873,7 @@ async def process_json_sync(
                                 SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                 file_label,
                                 media_has_spoiler,
-                            )
+                            ))
                         else:
                             sent = None
                             for _ in range(3):
@@ -829,36 +883,38 @@ async def process_json_sync(
                                 file = ProgressFSInputFile(media_path, tracker, file_label)
                                 try:
                                     if media_type == "photo":
-                                        send_coro = lambda: upload_target["client"].send_photo(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_photo(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
                                         )
                                     elif media_type == "video":
-                                        send_coro = lambda: upload_target["client"].send_video(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_video(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id, has_spoiler=media_has_spoiler
                                         )
                                     elif media_type == "animation":
-                                        send_coro = lambda: upload_target["client"].send_animation(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_animation(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "audio":
-                                        send_coro = lambda: upload_target["client"].send_audio(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_audio(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "voice":
-                                        send_coro = lambda: upload_target["client"].send_voice(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_voice(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     elif media_type == "sticker":
                                         sent = await execute_with_network_retry(
-                                            lambda: upload_target["client"].send_sticker(chat_id, file, reply_to_message_id=reply_to_id),
+                                            lambda: delivery.wrap_client(upload_target["client"]).send_sticker(chat_id, file, reply_to_message_id=reply_to_id),
                                             action_label=f"JSON 贴纸发送 {msg_id}",
                                             sync_state=sync_state,
                                             log_tag="JSON_NETWORK_RETRY",
                                         )
+                                        if sent is None:
+                                            raise _JsonUnconfirmedSendResultError("贴纸发送未返回结果，请核对目标频道")
                                         await bot_engine.note_upload_success(upload_target["client"], file_size)
                                         break
                                     else:
-                                        send_coro = lambda: upload_target["client"].send_document(
+                                        send_coro = lambda: delivery.wrap_client(upload_target["client"]).send_document(
                                             chat_id, file, caption=caption, parse_mode="HTML", reply_to_message_id=reply_to_id
                                         )
                                     if media_type != "sticker":
@@ -868,12 +924,16 @@ async def process_json_sync(
                                             sync_state=sync_state,
                                             log_tag="JSON_NETWORK_RETRY",
                                         )
+                                        if sent is None:
+                                            raise _JsonUnconfirmedSendResultError("媒体发送未返回结果，请核对目标频道")
                                         await bot_engine.note_upload_success(upload_target["client"], file_size)
                                         break
                                 except Exception as exc:
                                     if sync_state["stop_requested"]:
                                         raise
-                                    if isinstance(exc, SyncNetworkRetryExhaustedError):
+                                    if isinstance(exc, (SyncNetworkRetryExhaustedError, SyncDeliveryPendingError, SyncMappingPersistenceError, _JsonUnconfirmedSendResultError)):
+                                        raise
+                                    if _is_topics_parse_error(exc):
                                         raise
                                     if media_type == "sticker":
                                         thumb = str(msg.get("thumbnail") or "")
@@ -881,7 +941,7 @@ async def process_json_sync(
                                         if _is_request_entity_too_large(exc):
                                             if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 上传体积超限，已改用辅助账号发送")
-                                                sent = await _send_json_single_via_user(
+                                                sent = await delivery.send(lambda: _send_json_single_via_user(
                                                     chat_id,
                                                     media_type,
                                                     media_path,
@@ -890,7 +950,7 @@ async def process_json_sync(
                                                     SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                     file_label,
                                                     media_has_spoiler,
-                                                )
+                                                ))
                                                 break
                                             raise
                                         retry_after = _parse_retry_after_seconds(exc)
@@ -904,7 +964,7 @@ async def process_json_sync(
                                             )
                                             if upload_target["sender"] == "user":
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 频控，已切换辅助账号发送")
-                                                sent = await _send_json_single_via_user(
+                                                sent = await delivery.send(lambda: _send_json_single_via_user(
                                                     chat_id,
                                                     media_type,
                                                     media_path,
@@ -913,7 +973,7 @@ async def process_json_sync(
                                                     SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                     file_label,
                                                     media_has_spoiler,
-                                                )
+                                                ))
                                                 break
                                             continue
                                         if bot_engine.should_disable_upload_bot_for_error(exc):
@@ -926,7 +986,7 @@ async def process_json_sync(
                                             )
                                             if upload_target["sender"] == "user":
                                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | 当前 Bot 已失效，已切换辅助账号发送")
-                                                sent = await _send_json_single_via_user(
+                                                sent = await delivery.send(lambda: _send_json_single_via_user(
                                                     chat_id,
                                                     media_type,
                                                     media_path,
@@ -935,14 +995,14 @@ async def process_json_sync(
                                                     SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                     file_label,
                                                     media_has_spoiler,
-                                                )
+                                                ))
                                                 break
                                             continue
                                         if not thumb_path or not os.path.exists(thumb_path):
                                             raise
                                         await db.add_msg_log("JSON_STICKER_AS_IMAGE", f"消息ID:{msg_id} | 贴纸发送失败，已改为缩略图图片发送: {exc}")
                                         sent = await _execute_with_retry(
-                                            lambda: bot_engine.aiogram_bot.send_photo(
+                                            lambda: delivery.wrap_client(bot_engine.aiogram_bot).send_photo(
                                                 chat_id,
                                                 FSInputFile(thumb_path),
                                                 caption=caption,
@@ -955,7 +1015,7 @@ async def process_json_sync(
                                     if _is_request_entity_too_large(exc):
                                         if _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 上传体积超限，已改用辅助账号发送")
-                                            sent = await _send_json_single_via_user(
+                                            sent = await delivery.send(lambda: _send_json_single_via_user(
                                                 chat_id,
                                                 media_type,
                                                 media_path,
@@ -964,7 +1024,7 @@ async def process_json_sync(
                                                 SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                 file_label,
                                                 media_has_spoiler,
-                                            )
+                                            ))
                                             break
                                         raise
                                     retry_after = _parse_retry_after_seconds(exc)
@@ -978,7 +1038,7 @@ async def process_json_sync(
                                         )
                                         if upload_target["sender"] == "user":
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 频控，已切换辅助账号发送")
-                                            sent = await _send_json_single_via_user(
+                                            sent = await delivery.send(lambda: _send_json_single_via_user(
                                                 chat_id,
                                                 media_type,
                                                 media_path,
@@ -987,7 +1047,7 @@ async def process_json_sync(
                                                 SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                 file_label,
                                                 media_has_spoiler,
-                                            )
+                                            ))
                                             break
                                         continue
                                     if bot_engine.should_disable_upload_bot_for_error(exc):
@@ -1000,7 +1060,7 @@ async def process_json_sync(
                                         )
                                         if upload_target["sender"] == "user":
                                             await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | 当前 Bot 已失效，已切换辅助账号发送")
-                                            sent = await _send_json_single_via_user(
+                                            sent = await delivery.send(lambda: _send_json_single_via_user(
                                                 chat_id,
                                                 media_type,
                                                 media_path,
@@ -1009,13 +1069,13 @@ async def process_json_sync(
                                                 SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                                 file_label,
                                                 media_has_spoiler,
-                                            )
+                                            ))
                                             break
                                         continue
                                     raise
                             if sent is None and not sync_state["stop_requested"] and _json_should_fallback_to_user(sender, clone_fallback_to_user):
                                 await db.add_msg_log("JSON_FALLBACK", f"消息ID:{msg_id} | Bot 发送失败，已改用辅助账号发送")
-                                sent = await _send_json_single_via_user(
+                                sent = await delivery.send(lambda: _send_json_single_via_user(
                                     chat_id,
                                     media_type,
                                     media_path,
@@ -1024,7 +1084,7 @@ async def process_json_sync(
                                     SharedUploadProgressTracker("上传中 [改用辅助账号]", file_size),
                                     file_label,
                                     media_has_spoiler,
-                                )
+                                ))
                             if sent is None:
                                 if sync_state["stop_requested"]:
                                     return outcome
@@ -1044,9 +1104,9 @@ async def process_json_sync(
                         wait_for_available_bot=not _json_should_fallback_to_user(sender, clone_fallback_to_user),
                     )
                     if upload_target["sender"] == "user":
-                        sent = await _send_json_text_via_user(chat_id, text, reply_to_id)
+                        sent = await delivery.send(lambda: _send_json_text_via_user(chat_id, text, reply_to_id))
                     else:
-                        sent = await _send_json_text_via_bot(
+                        sent = await delivery.send(lambda: _send_json_text_via_bot(
                             upload_target,
                             sender,
                             clone_fallback_to_user,
@@ -1054,7 +1114,7 @@ async def process_json_sync(
                             text,
                             reply_to_id,
                             msg_id,
-                        )
+                        ))
                     if sent is None:
                         if sync_state["stop_requested"]:
                             return outcome
@@ -1065,22 +1125,34 @@ async def process_json_sync(
                     await db.add_msg_log("JSON_MEDIA_MISSING", f"消息ID:{msg_id} | 没有可发送的媒体或文本")
                     continue
 
-                if not sent_id:
+                if not isinstance(sent_id, int) or isinstance(sent_id, bool) or sent_id <= 0:
+                    await delivery.mark_unconfirmed("发送未返回有效消息 ID")
                     outcome.record("sent_unmapped")
                     await db.add_msg_log("JSON_SEND_UNMAPPED", f"消息ID:{msg_id} | 发送未返回消息 ID，请核对目标频道")
                     continue
-                await record_success(source_scope_id, target_id, msg_id, sent_id, force_send=force_send)
+                await record_success(source_scope_id, target_id, msg_id, sent_id, force_send=force_send,
+                    owner_user_id=delivery.owner_user_id)
                 outcome.record("sent_mapped")
                 await db.add_msg_log("JSON_SEND", f"消息ID:{msg_id} | 目标:[{target_id}] 新ID:{sent_id} | 上传成功")
             except JsonSyncFatalError as exc:
                 outcome.record("failed")
                 await log_sync_error(f"JSON 致命错误 ID {msg_id}", exc)
                 raise
+            except SyncMappingPersistenceError:
+                raise
+            except SyncDeliveryPendingError:
+                outcome.record("sent_unmapped")
+                await db.add_msg_log("JSON_SEND_UNMAPPED", f"消息ID:{msg_id} | 发送结果待确认，请核对目标频道后决定是否强制重发")
             except Exception as exc:
                 if sync_state["stop_requested"]:
                     break
+                if _is_topics_parse_error(exc) or isinstance(exc, _JsonUnconfirmedSendResultError):
+                    await delivery.mark_unconfirmed(str(exc))
+                    outcome.record("sent_unmapped")
+                    await db.add_msg_log("JSON_SEND_UNMAPPED", f"消息ID:{msg_id} | 发送后回包解析失败，请核对目标频道")
+                    continue
                 outcome.record("failed")
-                if isinstance(exc, SyncNetworkRetryExhaustedError):
+                if isinstance(exc, (SyncNetworkRetryExhaustedError, SyncDeliveryPendingError, SyncMappingPersistenceError)):
                     raise
                 await log_sync_error(f"JSON 消息上传失败 ID {msg_id}", exc)
 

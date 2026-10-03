@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import sys
 from collections.abc import Awaitable, Callable
 
 import aiosqlite
@@ -21,6 +22,28 @@ LOG_RETENTION_LIMIT = 100
 _db_conn: aiosqlite.Connection | None = None
 _db_lock: asyncio.Lock | None = None
 _db_loop: asyncio.AbstractEventLoop | None = None
+
+
+class MessageDeliveryPendingError(RuntimeError):
+    def __init__(self, source_id: int, target_id: int, msg_ids: list[int]):
+        self.source_id = source_id
+        self.target_id = target_id
+        self.msg_ids = msg_ids
+        super().__init__(f"消息发送结果待确认: 源 {source_id}，目标 {target_id}，消息 {msg_ids}")
+
+
+def get_mapping_owner_id(target_channel_id: int) -> int:
+    if target_channel_id != -1:
+        return 0
+    engine = sys.modules.get("bot_engine")
+    app = getattr(engine, "pyro_user_app", None)
+    return int(getattr(getattr(app, "me", None), "id", 0) or 0)
+
+
+def _delivery_owner_id(target_channel_id: int, owner_user_id: int | None) -> int:
+    if target_channel_id != -1:
+        return 0
+    return get_mapping_owner_id(target_channel_id) if owner_user_id is None else int(owner_user_id)
 
 
 async def _ensure_db_context() -> asyncio.Lock:
@@ -72,10 +95,15 @@ async def _run_in_db(
 ):
     conn = await _get_connection()
     async with await _ensure_db_context():
-        result = await action(conn)
-        if commit:
-            await conn.commit()
-        return result
+        try:
+            result = await action(conn)
+            if commit:
+                await conn.commit()
+            return result
+        except BaseException:
+            if commit:
+                await conn.rollback()
+            raise
 
 
 async def _fetchall(sql: str, params: tuple = ()) -> list:
@@ -201,6 +229,17 @@ async def _migrate_message_mappings(conn: aiosqlite.Connection) -> None:
 
 
 async def _ensure_supporting_tables(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS message_sync_receipts ("
+        "source_channel_id INTEGER NOT NULL, "
+        "source_msg_id INTEGER NOT NULL, "
+        "target_channel_id INTEGER NOT NULL, "
+        "owner_user_id INTEGER NOT NULL DEFAULT 0, "
+        "status TEXT NOT NULL CHECK(status IN ('sending', 'unconfirmed')), "
+        "reason TEXT NOT NULL DEFAULT '', "
+        "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+        "PRIMARY KEY(source_channel_id, source_msg_id, target_channel_id, owner_user_id))"
+    )
     await conn.execute(
         "CREATE TABLE IF NOT EXISTS system_logs ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -455,7 +494,9 @@ async def save_msg_mapping(
     target_channel_id: int,
     target_msg_id: int,
     overwrite: bool = False,
+    owner_user_id: int | None = None,
 ):
+    owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
     sql = (
         "INSERT OR REPLACE INTO message_mappings "
         "(source_channel_id, source_msg_id, target_channel_id, target_msg_id) VALUES (?, ?, ?, ?)"
@@ -464,7 +505,99 @@ async def save_msg_mapping(
         "INSERT OR IGNORE INTO message_mappings "
         "(source_channel_id, source_msg_id, target_channel_id, target_msg_id) VALUES (?, ?, ?, ?)"
     )
-    await _execute(sql, (source_channel_id, source_msg_id, target_channel_id, target_msg_id), commit=True)
+    async def action(conn: aiosqlite.Connection):
+        await conn.execute(sql, (source_channel_id, source_msg_id, target_channel_id, target_msg_id))
+        await conn.execute(
+            "DELETE FROM message_sync_receipts "
+            "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
+            (source_channel_id, source_msg_id, target_channel_id, owner_id),
+        )
+
+    await _run_in_db(action, commit=True)
+
+
+async def prepare_message_delivery(
+    source_channel_id: int,
+    target_channel_id: int,
+    msg_ids: list[int],
+    force: bool = False,
+    owner_user_id: int | None = None,
+) -> None:
+    owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    unique_ids = list(dict.fromkeys(int(msg_id) for msg_id in msg_ids))
+    if not unique_ids:
+        return
+
+    async def action(conn: aiosqlite.Connection):
+        # Reserve the entire group before any Telegram operation, including across connections.
+        await conn.execute("BEGIN IMMEDIATE")
+        if not force:
+            pending_ids = []
+            for msg_id in unique_ids:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM message_sync_receipts "
+                    "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
+                    (source_channel_id, msg_id, target_channel_id, owner_id),
+                )
+                if await cursor.fetchone():
+                    pending_ids.append(msg_id)
+            if pending_ids:
+                raise MessageDeliveryPendingError(source_channel_id, target_channel_id, pending_ids)
+        await conn.executemany(
+            "INSERT INTO message_sync_receipts "
+            "(source_channel_id, source_msg_id, target_channel_id, owner_user_id, status, reason) "
+            "VALUES (?, ?, ?, ?, 'sending', '') "
+            "ON CONFLICT(source_channel_id, source_msg_id, target_channel_id, owner_user_id) "
+            "DO UPDATE SET status = 'sending', reason = '', updated_at = CURRENT_TIMESTAMP",
+            [(source_channel_id, msg_id, target_channel_id, owner_id) for msg_id in unique_ids],
+        )
+
+    await _run_in_db(action, commit=True)
+
+
+async def get_message_delivery(
+    source_channel_id: int,
+    source_msg_id: int,
+    target_channel_id: int,
+    owner_user_id: int | None = None,
+) -> dict | None:
+    row = await _fetchone(
+        "SELECT status, reason FROM message_sync_receipts "
+        "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
+        (source_channel_id, source_msg_id, target_channel_id, _delivery_owner_id(target_channel_id, owner_user_id)),
+    )
+    return {"state": row[0], "reason": row[1]} if row else None
+
+
+async def mark_message_delivery_unconfirmed(
+    source_channel_id: int,
+    target_channel_id: int,
+    msg_ids: list[int],
+    reason: str,
+    owner_user_id: int | None = None,
+) -> None:
+    owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    await _executemany(
+        "UPDATE message_sync_receipts SET status = 'unconfirmed', reason = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
+        [(reason, source_channel_id, int(msg_id), target_channel_id, owner_id) for msg_id in msg_ids],
+        commit=True,
+    )
+
+
+async def release_message_delivery(
+    source_channel_id: int,
+    target_channel_id: int,
+    msg_ids: list[int],
+    owner_user_id: int | None = None,
+) -> None:
+    owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    await _executemany(
+        "DELETE FROM message_sync_receipts "
+        "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
+        [(source_channel_id, int(msg_id), target_channel_id, owner_id) for msg_id in msg_ids],
+        commit=True,
+    )
 
 
 async def get_target_msg_id(source_channel_id: int, source_msg_id: int, target_channel_id: int) -> int | None:

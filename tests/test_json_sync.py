@@ -14,6 +14,10 @@ class FakeSentMessage:
 
 class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        for name in ("get_message_delivery", "prepare_message_delivery", "mark_message_delivery_unconfirmed", "release_message_delivery"):
+            patcher = patch.object(json_sync.db, name, AsyncMock(return_value=None))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.filter_patcher = patch(
             "sync_worker.json_import.process.db.apply_message_filters",
             AsyncMock(side_effect=lambda text, *_: (False, text)),
@@ -819,7 +823,7 @@ class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
             second_kwargs = fake_user.send_message.await_args_list[1].kwargs
             self.assertEqual(first_kwargs["reply_to_message_id"], 999)
             self.assertNotIn("reply_to_message_id", second_kwargs)
-            mock_record_success.assert_awaited_once_with(ANY, -100456, 30, 1030, force_send=False)
+            mock_record_success.assert_awaited_once_with(ANY, -100456, 30, 1030, force_send=False, owner_user_id=0)
             self.assertNotEqual(mock_record_success.await_args.args[0], 0)
 
     async def test_process_json_sync_user_text_accepts_pyrogram_message_id_field(self):
@@ -855,7 +859,7 @@ class JsonSyncTests(unittest.IsolatedAsyncioTestCase):
                  patch("sync_worker.json_import.process.bot_engine.aiogram_bot"):
                 await json_sync.process_json_sync("user", "@target", str(json_path), 0, False)
 
-            mock_record_success.assert_awaited_once_with(ANY, -100456, 10, 1010, force_send=False)
+            mock_record_success.assert_awaited_once_with(ANY, -100456, 10, 1010, force_send=False, owner_user_id=0)
             self.assertNotEqual(mock_record_success.await_args.args[0], 0)
 
     async def test_process_json_sync_can_prepend_external_source_header(self):
