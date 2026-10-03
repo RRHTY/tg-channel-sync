@@ -22,6 +22,9 @@ class JsonDeliveryGuardTests(unittest.IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.TemporaryDirectory(dir=task_temp)
         self.original_db = database.DB_FILE
         self.original_dirs = database.ensure_runtime_dirs
+        self.session_patch = patch.object(database, "pyrogram_user_session_base", return_value=Path(self.temp_dir.name) / "fake-session", create=True)
+        self.session_patch.start()
+        database.clear_saved_message_account()
         await database.close_db()
         database.DB_FILE = str(Path(self.temp_dir.name) / "data.db")
         database.ensure_runtime_dirs = lambda: None
@@ -47,6 +50,8 @@ class JsonDeliveryGuardTests(unittest.IsolatedAsyncioTestCase):
         await database.close_db()
         database.DB_FILE = self.original_db
         database.ensure_runtime_dirs = self.original_dirs
+        database.clear_saved_message_account()
+        self.session_patch.stop()
         self.temp_dir.cleanup()
 
     def group(self):

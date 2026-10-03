@@ -18,6 +18,9 @@ class DeliveryReceiptTests(unittest.IsolatedAsyncioTestCase):
         self.db_path = Path(self.temp_dir.name) / "receipts.db"
         self.original_db_file = database.DB_FILE
         self.original_ensure_dirs = database.ensure_runtime_dirs
+        self.session_patch = patch.object(database, "pyrogram_user_session_base", return_value=Path(self.temp_dir.name) / "fake-session", create=True)
+        self.session_patch.start()
+        database.clear_saved_message_account()
         await database.close_db()
         database.DB_FILE = str(self.db_path)
         database.ensure_runtime_dirs = lambda: self.db_path.parent.mkdir(exist_ok=True)
@@ -27,6 +30,8 @@ class DeliveryReceiptTests(unittest.IsolatedAsyncioTestCase):
         await database.close_db()
         database.DB_FILE = self.original_db_file
         database.ensure_runtime_dirs = self.original_ensure_dirs
+        database.clear_saved_message_account()
+        self.session_patch.stop()
         self.temp_dir.cleanup()
 
     async def test_send_intent_survives_connection_restart(self):

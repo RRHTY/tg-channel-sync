@@ -19,7 +19,6 @@ import database as db
 from app_config import get_config
 from app_paths import pyrogram_user_session_base
 from services.sync_services import (
-    SAVED_MESSAGES_TARGET_ID,
     begin_saved_messages_account_switch,
     begin_saved_messages_operation,
     build_link_rewrite_context,
@@ -1083,6 +1082,10 @@ async def handle_edited_post(message: Message):
     for target_id, target_msg_id, target_type in target_mappings:
         saved_operation = await begin_saved_messages_operation(target_type, target_id)
         try:
+            if saved_operation:
+                target_msg_id = await db.get_target_msg_id(source_id, msg_id, target_id)
+                if target_msg_id is None:
+                    continue
             link_context = await build_link_rewrite_context(aiogram_bot, source_id, target_id)
             target_html, rewrite_count = await rewrite_message_links(new_html, source_id, link_context)
             chat_id = await resolve_destination_chat_id(target_type, target_id, pyro_user_app)
@@ -1130,11 +1133,9 @@ async def poll_public_user_channel_mappings():
 
 
 def init_user_client():
-    global pyro_user_app
     telegram = _telegram_config()
     proxy = _proxy_config()
     if not telegram.get("api_id") or not telegram.get("api_hash"):
-        pyro_user_app = None
         return None
 
     from pyrogram.connection.transport.tcp.tcp import TCP
@@ -1152,8 +1153,7 @@ def init_user_client():
             self.writer = sock.writer
         TCP._connect = _patched_connect
 
-    pyro_user_app = Client(str(pyrogram_user_session_base()), api_id=telegram["api_id"], api_hash=telegram["api_hash"], ipv6=False)
-    return pyro_user_app
+    return Client(str(pyrogram_user_session_base()), api_id=telegram["api_id"], api_hash=telegram["api_hash"], ipv6=False)
 
 
 async def _dispose_client(client):
@@ -1192,28 +1192,49 @@ def get_send_code_cooldown_seconds():
 
 async def _finalize_user_client(client):
     global pyro_user_app
-    await client.invoke(raw.functions.updates.GetState())
-    client.me = await client.get_me()
-    await client.initialize()
-    pyro_user_app = client
+    try:
+        await client.invoke(raw.functions.updates.GetState())
+        client.me = await client.get_me()
+        await db.bind_saved_message_account(client.me.id)
+        await client.initialize()
+        pyro_user_app = client
+        _clear_user_auth_state()
+        return client.me
+    except BaseException:
+        await _discard_user_client(client)
+        raise
+
+
+async def _discard_user_client(client):
+    global pyro_user_app
+    pyro_user_app = None
+    db.clear_saved_message_account()
     _clear_user_auth_state()
-    return client.me
+    await _dispose_client(client)
+
+
+async def _begin_user_account_change():
+    if sync_state.get("is_syncing"):
+        raise ValueError("请先中断当前同步任务，待任务停止后再切换辅助账号")
+    await begin_saved_messages_account_switch()
 
 
 async def start_user_client_if_authorized():
-    client = init_user_client()
-    if client is None:
-        _clear_user_auth_state()
-        return None
-
-    authorized = await client.connect()
-    if not authorized:
-        await _dispose_client(client)
-        if pyro_user_app is client:
-            globals()["pyro_user_app"] = None
-        return None
-
-    return await _finalize_user_client(client)
+    await _begin_user_account_change()
+    try:
+        client = None
+        try:
+            client = init_user_client()
+            authorized = await client.connect() if client is not None else False
+        except BaseException:
+            await _discard_user_client(client)
+            raise
+        if not authorized:
+            await _discard_user_client(client)
+            return None
+        return await _finalize_user_client(client)
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 def get_user_auth_status():
@@ -1244,7 +1265,6 @@ def get_user_auth_status():
 
 
 async def begin_user_auth(phone_number: str):
-    global pyro_user_app
     phone_number = (phone_number or "").strip()
     if not phone_number:
         raise ValueError("手机号不能为空")
@@ -1255,76 +1275,86 @@ async def begin_user_auth(phone_number: str):
     if cooldown > 0:
         raise ValueError(f"请等待 {cooldown} 秒后再发送验证码")
 
-    await close_user_client()
-    client = init_user_client()
-    if client is None:
-        raise ValueError("辅助账号客户端初始化失败")
+    await _begin_user_account_change()
+    try:
+        await close_user_client()
+        client = init_user_client()
+        if client is None:
+            raise ValueError("辅助账号客户端初始化失败")
+        try:
+            authorized = await client.connect()
+            if not authorized:
+                sent_code = await client.send_code(phone_number)
+        except BaseException:
+            await _discard_user_client(client)
+            raise
+        if authorized:
+            me = await _finalize_user_client(client)
+            return {"status": "authorized", "message": "辅助账号已登录", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
 
-    authorized = await client.connect()
-    if authorized:
-        me = await _finalize_user_client(client)
-        return {"status": "authorized", "message": "辅助账号已登录", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
-
-    sent_code = await client.send_code(phone_number)
-    pyro_user_app = None
-    user_auth_state.update({
-        "client": client,
-        "phone_number": phone_number,
-        "phone_code_hash": sent_code.phone_code_hash,
-        "awaiting_code": True,
-        "awaiting_password": False,
-        "password_hint": "",
-        "send_code_available_at": time.time() + 30,
-    })
-    return {"status": "code_sent", "message": "验证码已发送，请在页面中继续输入验证码", "send_code_cooldown": 30}
+        user_auth_state.update({
+            "client": client,
+            "phone_number": phone_number,
+            "phone_code_hash": sent_code.phone_code_hash,
+            "awaiting_code": True,
+            "awaiting_password": False,
+            "password_hint": "",
+            "send_code_available_at": time.time() + 30,
+        })
+        return {"status": "code_sent", "message": "验证码已发送，请在页面中继续输入验证码", "send_code_cooldown": 30}
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 async def complete_user_auth(phone_code: str):
-    client = user_auth_state["client"]
-    phone_number = user_auth_state["phone_number"]
-    phone_code_hash = user_auth_state["phone_code_hash"]
-    if not client or not user_auth_state["awaiting_code"] or not phone_code_hash:
-        raise ValueError("当前没有待确认的登录请求")
-
+    await _begin_user_account_change()
     try:
-        me = await client.sign_in(phone_number, phone_code_hash, (phone_code or "").strip())
-    except SessionPasswordNeeded:
-        user_auth_state["awaiting_code"] = False
-        user_auth_state["awaiting_password"] = True
-        user_auth_state["password_hint"] = await client.get_password_hint()
-        return {"status": "password_required", "message": "该账号已开启两步验证，请输入密码", "password_hint": user_auth_state["password_hint"]}
-
-    me = me or await _finalize_user_client(client)
-    if not getattr(pyro_user_app, "is_initialized", False):
+        client = user_auth_state["client"]
+        phone_number = user_auth_state["phone_number"]
+        phone_code_hash = user_auth_state["phone_code_hash"]
+        if not client or not user_auth_state["awaiting_code"] or not phone_code_hash:
+            raise ValueError("当前没有待确认的登录请求")
+        try:
+            await client.sign_in(phone_number, phone_code_hash, (phone_code or "").strip())
+        except SessionPasswordNeeded:
+            user_auth_state["awaiting_code"] = False
+            user_auth_state["awaiting_password"] = True
+            user_auth_state["password_hint"] = await client.get_password_hint()
+            return {"status": "password_required", "message": "该账号已开启两步验证，请输入密码", "password_hint": user_auth_state["password_hint"]}
         me = await _finalize_user_client(client)
-    return {"status": "authorized", "message": "辅助账号登录成功", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
+        return {"status": "authorized", "message": "辅助账号登录成功", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 async def complete_user_password(password: str):
-    client = user_auth_state["client"]
-    if not client or not user_auth_state["awaiting_password"]:
-        raise ValueError("当前没有待输入密码的登录请求")
-
-    me = await client.check_password(password or "")
-    if not getattr(pyro_user_app, "is_initialized", False):
+    await _begin_user_account_change()
+    try:
+        client = user_auth_state["client"]
+        if not client or not user_auth_state["awaiting_password"]:
+            raise ValueError("当前没有待输入密码的登录请求")
+        await client.check_password(password or "")
         me = await _finalize_user_client(client)
-    return {"status": "authorized", "message": "辅助账号登录成功", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
+        return {"status": "authorized", "message": "辅助账号登录成功", "user": {"id": me.id, "name": me.first_name or "", "username": me.username or ""}}
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 async def cancel_user_auth():
-    client = user_auth_state["client"]
-    _clear_user_auth_state()
-    await _dispose_client(client)
-    return {"status": "cancelled", "message": "已取消辅助账号登录流程"}
+    await begin_saved_messages_account_switch()
+    try:
+        client = user_auth_state["client"]
+        _clear_user_auth_state()
+        await _dispose_client(client)
+        return {"status": "cancelled", "message": "已取消辅助账号登录流程"}
+    finally:
+        await finish_saved_messages_account_switch()
 
 
 async def switch_user_account():
-    if sync_state.get("is_syncing"):
-        raise ValueError("请先中断当前同步任务，待任务停止后再切换辅助账号")
-    await begin_saved_messages_account_switch()
+    await _begin_user_account_change()
     try:
         await close_user_client()
-        await db.delete_message_mappings_for_target(SAVED_MESSAGES_TARGET_ID)
         session_base = pyrogram_user_session_base()
         for path in session_base.parent.glob(f"{session_base.name}*"):
             try:
@@ -1339,12 +1369,14 @@ async def switch_user_account():
 
 async def close_user_client():
     global pyro_user_app
+    current_client = pyro_user_app
     pending_client = user_auth_state["client"]
-    _clear_user_auth_state()
-    await _dispose_client(pyro_user_app)
-    if pending_client is not pyro_user_app:
-        await _dispose_client(pending_client)
     pyro_user_app = None
+    db.clear_saved_message_account()
+    _clear_user_auth_state()
+    await _dispose_client(current_client)
+    if pending_client is not current_client:
+        await _dispose_client(pending_client)
 
 
 

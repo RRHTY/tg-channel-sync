@@ -24,14 +24,17 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await database.get_public_user_mapping_groups())[0]["last_polled_message_id"], 10)
 
     async def asyncSetUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp")
         self.db_path = Path(self.temp_dir.name) / "data.db"
         self.original_db_file = database.DB_FILE
         self.original_ensure_dirs = database.ensure_runtime_dirs
         self.original_get_config = database.get_config
+        self.original_session_base = database.pyrogram_user_session_base
         database.DB_FILE = str(self.db_path)
         database.ensure_runtime_dirs = lambda: self.db_path.parent.mkdir(parents=True, exist_ok=True)
         database.get_config = lambda: {"sync": {"system_log_retention_limit": 1000, "message_log_retention_limit": 5000}}
+        database.pyrogram_user_session_base = lambda: self.db_path.parent / "fake_user_session"
+        database.clear_saved_message_account()
         await database.close_db()
 
     async def asyncTearDown(self):
@@ -39,6 +42,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         database.DB_FILE = self.original_db_file
         database.ensure_runtime_dirs = self.original_ensure_dirs
         database.get_config = self.original_get_config
+        database.pyrogram_user_session_base = self.original_session_base
+        database.clear_saved_message_account()
         self.temp_dir.cleanup()
 
     async def test_apply_message_filters_drops_text_or_file_name_matches(self):
@@ -204,6 +209,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_channel_mapping_saved_target_type_stored_and_read_back(self):
         await database.init_db()
+        await database.bind_saved_message_account(111)
         await database.add_channel_mapping(
             -100123,
             sync_services.SAVED_MESSAGES_TARGET_ID,
@@ -232,6 +238,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_message_mappings_for_target_preserves_other_targets(self):
         await database.init_db()
+        await database.bind_saved_message_account(111)
         await database.save_msg_mapping(-100123, 10, sync_services.SAVED_MESSAGES_TARGET_ID, 20)
         await database.save_msg_mapping(-100123, 10, -100456, 30)
 

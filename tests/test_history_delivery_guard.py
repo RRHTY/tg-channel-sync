@@ -15,6 +15,9 @@ class HistoryDeliveryGuardTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp")
         self.original_db = database.DB_FILE
         self.original_dirs = database.ensure_runtime_dirs
+        self.session_patch = patch.object(database, "pyrogram_user_session_base", return_value=Path(self.temp.name) / "fake-session", create=True)
+        self.session_patch.start()
+        database.clear_saved_message_account()
         await database.close_db()
         database.DB_FILE = str(Path(self.temp.name) / "data.db")
         database.ensure_runtime_dirs = lambda: None
@@ -41,6 +44,8 @@ class HistoryDeliveryGuardTests(unittest.IsolatedAsyncioTestCase):
         await database.close_db()
         database.DB_FILE = self.original_db
         database.ensure_runtime_dirs = self.original_dirs
+        database.clear_saved_message_account()
+        self.session_patch.stop()
         self.temp.cleanup()
 
     def messages(self):

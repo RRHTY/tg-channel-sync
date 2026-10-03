@@ -114,25 +114,40 @@ async def process_public_channel_mapping_group(bot, user_app, group: dict):
                 target_id = int(target_mapping["target_id"])
                 if target_id in paused_targets:
                     continue
-                if not await db.is_channel_mapping_enabled(source_id, target_id):
-                    paused_targets.add(target_id)
-                    continue
-                if group_max_id <= int(target_mapping.get("last_polled_message_id", last_message_id)):
-                    continue
-                result = await _process_public_target(
-                    bot,
-                    user_app,
-                    source_id,
-                    target_mapping,
-                    message_group,
-                    include_external_source_header,
-                    source_username_override,
-                )
-                if result not in PROCESSED_SYNC_RESULTS:
-                    raise RuntimeError(
-                        f"公开频道消息处理未完成: source={source_id} target={target_id} group_max_id={group_max_id} result={result}"
+                saved_operation = await begin_saved_messages_operation(target_mapping.get("target_type"), target_id)
+                try:
+                    if saved_operation:
+                        client_owner = int(getattr(getattr(user_app, "me", None), "id", 0) or 0)
+                        mapping_owner = int(target_mapping.get("owner_user_id", 0) or 0)
+                        current_owner = db.get_mapping_owner_id(target_id)
+                        if (
+                            not getattr(user_app, "is_initialized", False)
+                            or client_owner <= 0
+                            or client_owner != current_owner
+                            or client_owner != mapping_owner
+                        ):
+                            raise ValueError("收藏夹轮询账号已变更或未完成登录，请重新获取当前账号的映射")
+                    if not await db.is_channel_mapping_enabled(source_id, target_id):
+                        paused_targets.add(target_id)
+                        continue
+                    if group_max_id <= int(target_mapping.get("last_polled_message_id", last_message_id)):
+                        continue
+                    result = await _process_public_target(
+                        bot,
+                        user_app,
+                        source_id,
+                        target_mapping,
+                        message_group,
+                        include_external_source_header,
+                        source_username_override,
                     )
-                await db.update_public_user_poll_position(source_id, source_ref, group_max_id, target_id=target_id)
+                    if result not in PROCESSED_SYNC_RESULTS:
+                        raise RuntimeError(
+                            f"公开频道消息处理未完成: source={source_id} target={target_id} group_max_id={group_max_id} result={result}"
+                        )
+                    await db.update_public_user_poll_position(source_id, source_ref, group_max_id, target_id=target_id)
+                finally:
+                    await finish_saved_messages_operation(saved_operation)
     finally:
         sync_state["mode"] = previous_mode
 

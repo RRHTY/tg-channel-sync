@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import sys
+import sqlite3
 from collections.abc import Awaitable, Callable
+from contextlib import closing
 
 import aiosqlite
 
 from app_config import get_config
-from app_paths import database_file, ensure_runtime_dirs
+from app_paths import database_file, ensure_runtime_dirs, pyrogram_user_session_base
 from services.filter_rules import (
     validate_filter_rule,
     compile_filter_regex as _compile_filter_regex,
@@ -22,6 +23,7 @@ LOG_RETENTION_LIMIT = 100
 _db_conn: aiosqlite.Connection | None = None
 _db_lock: asyncio.Lock | None = None
 _db_loop: asyncio.AbstractEventLoop | None = None
+_saved_message_account_id = 0
 
 
 class MessageDeliveryPendingError(RuntimeError):
@@ -33,17 +35,24 @@ class MessageDeliveryPendingError(RuntimeError):
 
 
 def get_mapping_owner_id(target_channel_id: int) -> int:
-    if target_channel_id != -1:
-        return 0
-    engine = sys.modules.get("bot_engine")
-    app = getattr(engine, "pyro_user_app", None)
-    return int(getattr(getattr(app, "me", None), "id", 0) or 0)
+    return _saved_message_account_id if target_channel_id == -1 else 0
+
+
+def clear_saved_message_account() -> None:
+    global _saved_message_account_id
+    _saved_message_account_id = 0
 
 
 def _delivery_owner_id(target_channel_id: int, owner_user_id: int | None) -> int:
     if target_channel_id != -1:
         return 0
     return get_mapping_owner_id(target_channel_id) if owner_user_id is None else int(owner_user_id)
+
+
+def _require_saved_owner(owner_id: int) -> int:
+    if owner_id <= 0:
+        raise ValueError("收藏夹目标需要先完成辅助账号登录并验证账号")
+    return owner_id
 
 
 async def _ensure_db_context() -> asyncio.Lock:
@@ -230,6 +239,20 @@ async def _migrate_message_mappings(conn: aiosqlite.Connection) -> None:
 
 async def _ensure_supporting_tables(conn: aiosqlite.Connection) -> None:
     await conn.execute(
+        "CREATE TABLE IF NOT EXISTS saved_message_mappings ("
+        "owner_user_id INTEGER NOT NULL CHECK(owner_user_id > 0), "
+        "source_channel_id INTEGER NOT NULL, source_msg_id INTEGER NOT NULL, "
+        "target_msg_id INTEGER NOT NULL, "
+        "PRIMARY KEY(owner_user_id, source_channel_id, source_msg_id))"
+    )
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS saved_poll_positions ("
+        "owner_user_id INTEGER NOT NULL CHECK(owner_user_id > 0), "
+        "source_id INTEGER NOT NULL, source_ref TEXT NOT NULL, "
+        "last_polled_message_id INTEGER NOT NULL DEFAULT 0, "
+        "PRIMARY KEY(owner_user_id, source_id, source_ref))"
+    )
+    await conn.execute(
         "CREATE TABLE IF NOT EXISTS message_sync_receipts ("
         "source_channel_id INTEGER NOT NULL, "
         "source_msg_id INTEGER NOT NULL, "
@@ -297,14 +320,88 @@ async def _seed_default_settings(conn: aiosqlite.Connection) -> None:
         )
 
 
+def _read_legacy_saved_owner() -> int:
+    session_path = pyrogram_user_session_base().with_suffix(".session")
+    if not session_path.is_file():
+        return 0
+    try:
+        with closing(sqlite3.connect(session_path.resolve().as_uri() + "?mode=ro", uri=True)) as session:
+            rows = session.execute("SELECT user_id, is_bot FROM sessions LIMIT 2").fetchall()
+        if len(rows) == 1 and rows[0][1] == 0 and type(rows[0][0]) is int and rows[0][0] > 0:
+            return rows[0][0]
+    except (sqlite3.Error, TypeError, ValueError, OSError):
+        pass
+    return 0
+
+
+async def _freeze_legacy_saved_owner(conn: aiosqlite.Connection) -> bool:
+    existing = await (await conn.execute(
+        "SELECT setting_value FROM global_settings WHERE setting_key = 'saved_messages_legacy_owner_id'"
+    )).fetchone()
+    if existing:
+        return False
+    legacy = await (await conn.execute(
+        "SELECT 1 FROM message_mappings WHERE target_channel_id = -1 "
+        "UNION ALL SELECT 1 FROM channel_mappings WHERE target_id = -1 AND last_polled_message_id > 0 LIMIT 1"
+    )).fetchone()
+    owner_id = _read_legacy_saved_owner() if legacy else 0
+    await conn.execute(
+        "INSERT INTO global_settings (setting_key, setting_value) VALUES ('saved_messages_legacy_owner_id', ?)",
+        (str(owner_id),),
+    )
+    return bool(legacy and owner_id == 0)
+
+
+async def bind_saved_message_account(account_id: int) -> None:
+    global _saved_message_account_id
+    owner_id = _require_saved_owner(int(account_id))
+
+    async def action(conn: aiosqlite.Connection):
+        await conn.execute("BEGIN IMMEDIATE")
+        frozen = await (await conn.execute(
+            "SELECT setting_value FROM global_settings WHERE setting_key = 'saved_messages_legacy_owner_id'"
+        )).fetchone()
+        migrated = await (await conn.execute(
+            "SELECT 1 FROM global_settings WHERE setting_key = 'saved_messages_legacy_migrated'"
+        )).fetchone()
+        if frozen and frozen[0] == str(owner_id) and not migrated:
+            # Keep the original rows as an archive; only the verified original account receives a copy.
+            await conn.execute(
+                "INSERT OR IGNORE INTO saved_message_mappings "
+                "(owner_user_id, source_channel_id, source_msg_id, target_msg_id) "
+                "SELECT ?, source_channel_id, source_msg_id, target_msg_id FROM message_mappings WHERE target_channel_id = -1",
+                (owner_id,),
+            )
+            await conn.execute(
+                "INSERT OR IGNORE INTO saved_poll_positions (owner_user_id, source_id, source_ref, last_polled_message_id) "
+                "SELECT ?, source_id, source_ref, last_polled_message_id FROM channel_mappings "
+                "WHERE target_id = -1 AND source_mode = 'public_user'",
+                (owner_id,),
+            )
+            await conn.execute(
+                "INSERT INTO global_settings (setting_key, setting_value) VALUES ('saved_messages_legacy_migrated', '1')"
+            )
+
+    await _run_in_db(action, commit=True)
+    _saved_message_account_id = owner_id
+
+
 async def init_db():
-    conn = await _get_connection()
-    async with await _ensure_db_context():
+    warning = "旧收藏夹断点的账号归属无法确认，已隔离保留，当前登录账号不会自动继承。"
+    async def action(conn: aiosqlite.Connection):
+        await conn.execute("BEGIN IMMEDIATE")
         await _migrate_channel_mappings(conn)
         await _migrate_message_mappings(conn)
         await _ensure_supporting_tables(conn)
         await _seed_default_settings(conn)
-        await conn.commit()
+        unknown_owner = await _freeze_legacy_saved_owner(conn)
+        if unknown_owner:
+            await conn.execute("INSERT INTO system_logs (level, message) VALUES ('WARNING', ?)", (warning,))
+        return unknown_owner
+
+    unknown_legacy_owner = await _run_in_db(action, commit=True)
+    if unknown_legacy_owner:
+        logging.getLogger("tg-channel-sync").warning(warning)
 
 
 async def add_channel_mapping(
@@ -322,7 +419,10 @@ async def add_channel_mapping(
     source_mode = "public_user" if str(source_mode).strip() == "public_user" else "bot"
     source_ref = str(source_ref or "").strip().lstrip("@")
     target_type = "saved" if str(target_type or "").strip() == "saved" else "channel"
-    await _execute(
+    saved_target = target_id == -1
+    owner_id = _require_saved_owner(get_mapping_owner_id(-1)) if saved_target else 0
+    cursor = max(0, int(last_polled_message_id or 0))
+    sql = (
         "INSERT INTO channel_mappings "
         "(source_id, target_id, realtime_sender, realtime_fallback_to_user, realtime_hash_perturb, "
         "source_mode, source_ref, last_polled_message_id, target_type) "
@@ -333,20 +433,34 @@ async def add_channel_mapping(
         "realtime_hash_perturb = excluded.realtime_hash_perturb, "
         "source_mode = excluded.source_mode, "
         "source_ref = excluded.source_ref, "
-        "target_type = excluded.target_type",
-        (
-            source_id,
-            target_id,
-            realtime_sender,
-            1 if realtime_fallback_to_user else 0,
-            1 if realtime_hash_perturb else 0,
-            source_mode,
-            source_ref,
-            max(0, int(last_polled_message_id or 0)),
-            target_type,
-        ),
-        commit=True,
+        "target_type = excluded.target_type"
     )
+    params = (
+        source_id,
+        target_id,
+        realtime_sender,
+        1 if realtime_fallback_to_user else 0,
+        1 if realtime_hash_perturb else 0,
+        source_mode,
+        source_ref,
+        0 if saved_target else cursor,
+        target_type,
+    )
+
+    async def action(conn: aiosqlite.Connection):
+        existing = await (await conn.execute(
+            "SELECT 1 FROM channel_mappings WHERE source_id = ? AND target_id = ?", (source_id, target_id)
+        )).fetchone()
+        await conn.execute(sql, params)
+        if saved_target and source_mode == "public_user" and not existing:
+            await conn.execute(
+                "INSERT INTO saved_poll_positions (owner_user_id, source_id, source_ref, last_polled_message_id) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(owner_user_id, source_id, source_ref) "
+                "DO UPDATE SET last_polled_message_id = excluded.last_polled_message_id",
+                (owner_id, source_id, source_ref, cursor),
+            )
+
+    await _run_in_db(action, commit=True)
 
 
 async def delete_channel_mapping(source_id: int, target_id: int | None = None):
@@ -435,18 +549,25 @@ async def get_target_channel_mappings(source_id: int, source_mode: str | None = 
 
 async def get_all_channel_mappings() -> list:
     return await _fetchall(
-        "SELECT source_id, target_id, realtime_sender, realtime_fallback_to_user, realtime_hash_perturb, "
-        "source_mode, source_ref, last_polled_message_id, target_type, enabled, source_title, target_title "
-        "FROM channel_mappings ORDER BY target_id, source_id"
+        "SELECT cm.source_id, cm.target_id, realtime_sender, realtime_fallback_to_user, realtime_hash_perturb, "
+        "source_mode, cm.source_ref, CASE WHEN cm.target_id = -1 THEN COALESCE(sp.last_polled_message_id, 0) "
+        "ELSE cm.last_polled_message_id END, target_type, enabled, source_title, target_title "
+        "FROM channel_mappings cm LEFT JOIN saved_poll_positions sp "
+        "ON cm.target_id = -1 AND sp.owner_user_id = ? AND sp.source_id = cm.source_id AND sp.source_ref = cm.source_ref "
+        "ORDER BY cm.target_id, cm.source_id", (get_mapping_owner_id(-1),),
     )
 
 
 async def get_public_user_mapping_groups() -> list[dict]:
+    owner_id = get_mapping_owner_id(-1)
     rows = await _fetchall(
-        "SELECT source_id, source_ref, target_id, realtime_sender, realtime_fallback_to_user, "
-        "realtime_hash_perturb, last_polled_message_id, target_type "
-        "FROM channel_mappings WHERE source_mode = 'public_user' AND source_ref != '' AND enabled = 1 "
-        "ORDER BY source_id, target_id"
+        "SELECT cm.source_id, cm.source_ref, target_id, realtime_sender, realtime_fallback_to_user, "
+        "realtime_hash_perturb, CASE WHEN target_id = -1 THEN COALESCE(sp.last_polled_message_id, 0) "
+        "ELSE cm.last_polled_message_id END, target_type "
+        "FROM channel_mappings cm LEFT JOIN saved_poll_positions sp "
+        "ON cm.target_id = -1 AND sp.owner_user_id = ? AND sp.source_id = cm.source_id AND sp.source_ref = cm.source_ref "
+        "WHERE source_mode = 'public_user' AND cm.source_ref != '' AND enabled = 1 "
+        "ORDER BY cm.source_id, target_id", (owner_id,),
     )
     groups: dict[tuple[int, str], dict] = {}
     for row in rows:
@@ -471,21 +592,46 @@ async def get_public_user_mapping_groups() -> list[dict]:
                 "source_ref": source_ref,
                 "target_type": row[7] or "channel",
                 "last_polled_message_id": int(row[6] or 0),
+                **({"owner_user_id": owner_id} if row[2] == -1 else {}),
             }
         )
     return list(groups.values())
 
 
 async def update_public_user_poll_position(source_id: int, source_ref: str, message_id: int, target_id: int | None = None) -> None:
-    await _execute(
+    owner_id = get_mapping_owner_id(-1)
+    if target_id == -1:
+        _require_saved_owner(owner_id)
+    sql = (
         "UPDATE channel_mappings "
         "SET last_polled_message_id = CASE "
         "WHEN last_polled_message_id > ? THEN last_polled_message_id ELSE ? END "
-        "WHERE source_mode = 'public_user' AND source_id = ? AND source_ref = ? AND enabled = 1"
-        + (" AND target_id = ?" if target_id is not None else ""),
-        (message_id, message_id, source_id, source_ref) + ((target_id,) if target_id is not None else ()),
-        commit=True,
+        "WHERE source_mode = 'public_user' AND source_id = ? AND source_ref = ? AND enabled = 1 AND target_id != -1"
+        + (" AND target_id = ?" if target_id is not None else "")
     )
+    params = (message_id, message_id, source_id, source_ref) + ((target_id,) if target_id is not None else ())
+
+    async def action(conn: aiosqlite.Connection):
+        if target_id is None:
+            saved_rule = await (await conn.execute(
+                "SELECT 1 FROM channel_mappings WHERE source_mode = 'public_user' AND source_id = ? "
+                "AND source_ref = ? AND enabled = 1 AND target_id = -1", (source_id, source_ref)
+            )).fetchone()
+            if saved_rule:
+                _require_saved_owner(owner_id)
+        if target_id != -1:
+            await conn.execute(sql, params)
+        if target_id in (None, -1) and owner_id > 0:
+            await conn.execute(
+                "INSERT INTO saved_poll_positions (owner_user_id, source_id, source_ref, last_polled_message_id) "
+                "SELECT ?, source_id, source_ref, ? FROM channel_mappings WHERE source_id = ? AND source_ref = ? "
+                "AND target_id = -1 AND source_mode = 'public_user' AND enabled = 1 "
+                "ON CONFLICT(owner_user_id, source_id, source_ref) DO UPDATE SET "
+                "last_polled_message_id = MAX(saved_poll_positions.last_polled_message_id, excluded.last_polled_message_id)",
+                (owner_id, max(0, int(message_id)), source_id, source_ref),
+            )
+
+    await _run_in_db(action, commit=True)
 
 
 async def save_msg_mapping(
@@ -497,6 +643,8 @@ async def save_msg_mapping(
     owner_user_id: int | None = None,
 ):
     owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    if target_channel_id == -1:
+        _require_saved_owner(owner_id)
     sql = (
         "INSERT OR REPLACE INTO message_mappings "
         "(source_channel_id, source_msg_id, target_channel_id, target_msg_id) VALUES (?, ?, ?, ?)"
@@ -505,8 +653,16 @@ async def save_msg_mapping(
         "INSERT OR IGNORE INTO message_mappings "
         "(source_channel_id, source_msg_id, target_channel_id, target_msg_id) VALUES (?, ?, ?, ?)"
     )
+    if target_channel_id == -1:
+        sql = (
+            ("INSERT OR REPLACE" if overwrite else "INSERT OR IGNORE")
+            + " INTO saved_message_mappings (owner_user_id, source_channel_id, source_msg_id, target_msg_id) VALUES (?, ?, ?, ?)"
+        )
+        mapping_params = (owner_id, source_channel_id, source_msg_id, target_msg_id)
+    else:
+        mapping_params = (source_channel_id, source_msg_id, target_channel_id, target_msg_id)
     async def action(conn: aiosqlite.Connection):
-        await conn.execute(sql, (source_channel_id, source_msg_id, target_channel_id, target_msg_id))
+        await conn.execute(sql, mapping_params)
         await conn.execute(
             "DELETE FROM message_sync_receipts "
             "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
@@ -524,6 +680,8 @@ async def prepare_message_delivery(
     owner_user_id: int | None = None,
 ) -> None:
     owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    if target_channel_id == -1:
+        _require_saved_owner(owner_id)
     unique_ids = list(dict.fromkeys(int(msg_id) for msg_id in msg_ids))
     if not unique_ids:
         return
@@ -561,10 +719,13 @@ async def get_message_delivery(
     target_channel_id: int,
     owner_user_id: int | None = None,
 ) -> dict | None:
+    owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    if target_channel_id == -1 and owner_id <= 0:
+        return None
     row = await _fetchone(
         "SELECT status, reason FROM message_sync_receipts "
         "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
-        (source_channel_id, source_msg_id, target_channel_id, _delivery_owner_id(target_channel_id, owner_user_id)),
+        (source_channel_id, source_msg_id, target_channel_id, owner_id),
     )
     return {"state": row[0], "reason": row[1]} if row else None
 
@@ -577,6 +738,8 @@ async def mark_message_delivery_unconfirmed(
     owner_user_id: int | None = None,
 ) -> None:
     owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    if target_channel_id == -1:
+        _require_saved_owner(owner_id)
     await _executemany(
         "UPDATE message_sync_receipts SET status = 'unconfirmed', reason = ?, updated_at = CURRENT_TIMESTAMP "
         "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
@@ -592,6 +755,8 @@ async def release_message_delivery(
     owner_user_id: int | None = None,
 ) -> None:
     owner_id = _delivery_owner_id(target_channel_id, owner_user_id)
+    if target_channel_id == -1:
+        _require_saved_owner(owner_id)
     await _executemany(
         "DELETE FROM message_sync_receipts "
         "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ? AND owner_user_id = ?",
@@ -601,6 +766,15 @@ async def release_message_delivery(
 
 
 async def get_target_msg_id(source_channel_id: int, source_msg_id: int, target_channel_id: int) -> int | None:
+    if target_channel_id == -1:
+        owner_id = get_mapping_owner_id(-1)
+        if owner_id <= 0:
+            return None
+        row = await _fetchone(
+            "SELECT target_msg_id FROM saved_message_mappings WHERE owner_user_id = ? AND source_channel_id = ? AND source_msg_id = ?",
+            (owner_id, source_channel_id, source_msg_id),
+        )
+        return row[0] if row else None
     row = await _fetchone(
         "SELECT target_msg_id FROM message_mappings "
         "WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ?",
@@ -615,12 +789,17 @@ async def get_all_target_msg_mappings(source_channel_id: int, source_msg_id: int
         "FROM message_mappings AS mm "
         "LEFT JOIN channel_mappings AS cm "
         "ON cm.source_id = mm.source_channel_id AND cm.target_id = mm.target_channel_id "
-        "WHERE mm.source_channel_id = ? AND mm.source_msg_id = ? AND COALESCE(cm.enabled, 1) = 1 ORDER BY mm.target_channel_id",
-        (source_channel_id, source_msg_id),
+        "WHERE mm.source_channel_id = ? AND mm.source_msg_id = ? AND mm.target_channel_id != -1 AND COALESCE(cm.enabled, 1) = 1 "
+        "UNION ALL SELECT -1, sm.target_msg_id, 'saved' FROM saved_message_mappings sm "
+        "LEFT JOIN channel_mappings cm ON cm.source_id = sm.source_channel_id AND cm.target_id = -1 "
+        "WHERE sm.source_channel_id = ? AND sm.source_msg_id = ? AND sm.owner_user_id = ? AND COALESCE(cm.enabled, 1) = 1 ORDER BY 1",
+        (source_channel_id, source_msg_id, source_channel_id, source_msg_id, get_mapping_owner_id(-1)),
     )
 
 
 async def is_message_synced(source_channel_id: int, source_msg_id: int, target_channel_id: int) -> bool:
+    if target_channel_id == -1:
+        return await get_target_msg_id(source_channel_id, source_msg_id, target_channel_id) is not None
     row = await _fetchone(
         "SELECT 1 FROM message_mappings WHERE source_channel_id = ? AND source_msg_id = ? AND target_channel_id = ?",
         (source_channel_id, source_msg_id, target_channel_id),
@@ -629,6 +808,10 @@ async def is_message_synced(source_channel_id: int, source_msg_id: int, target_c
 
 
 async def delete_message_mappings_for_target(target_channel_id: int) -> None:
+    if target_channel_id == -1:
+        owner_id = _require_saved_owner(get_mapping_owner_id(-1))
+        await _execute("DELETE FROM saved_message_mappings WHERE owner_user_id = ?", (owner_id,), commit=True)
+        return
     await _execute(
         "DELETE FROM message_mappings WHERE target_channel_id = ?",
         (target_channel_id,),

@@ -38,10 +38,13 @@ class FakePyroApp:
 
 class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp")
         self.db_path = Path(self.temp_dir.name) / "data.db"
         self.original_db_file = database.DB_FILE
         self.original_ensure_dirs = database.ensure_runtime_dirs
+        self.session_patch = patch.object(database, "pyrogram_user_session_base", return_value=Path(self.temp_dir.name) / "fake-session", create=True)
+        self.session_patch.start()
+        database.clear_saved_message_account()
         database.DB_FILE = str(self.db_path)
         database.ensure_runtime_dirs = lambda: self.db_path.parent.mkdir(parents=True, exist_ok=True)
         await database.close_db()
@@ -51,6 +54,8 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         await database.close_db()
         database.DB_FILE = self.original_db_file
         database.ensure_runtime_dirs = self.original_ensure_dirs
+        database.clear_saved_message_account()
+        self.session_patch.stop()
         self.temp_dir.cleanup()
 
     def test_format_channel_check_error_distinguishes_network_errors(self):
@@ -1009,6 +1014,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
         bot_engine.pyro_user_app = fake_user
         try:
             with patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1, 20, "saved")])), \
+                 patch("bot_engine.db.get_target_msg_id", AsyncMock(return_value=20)), \
                  patch("bot_engine.db.apply_message_filters", AsyncMock(return_value=(False, "new"))), \
                  patch("bot_engine.build_link_rewrite_context", AsyncMock(return_value=None)), \
                  patch("bot_engine.rewrite_message_links", AsyncMock(return_value=("new", 0))), \
@@ -1026,7 +1032,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             bot_engine.aiogram_bot = original_bot
             bot_engine.pyro_user_app = original_user
 
-    async def test_switch_user_account_invalidates_saved_message_mappings(self):
+    async def test_switch_user_account_preserves_saved_message_mappings(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp") as temp_dir:
             session_base = Path(temp_dir) / "sync_user_session"
             session_file = session_base.with_suffix(".session")
@@ -1039,7 +1045,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(session_file.exists())
 
         self.assertEqual(result["status"], "success")
-        mock_delete.assert_awaited_once_with(sync_services.SAVED_MESSAGES_TARGET_ID)
+        mock_delete.assert_not_awaited()
 
     async def test_switch_user_account_is_rejected_while_sync_is_running(self):
         with patch("bot_engine.sync_state", {"is_syncing": True}), \
@@ -1082,6 +1088,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
             with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / "temp") as temp_dir, \
                  patch("bot_engine.sync_state", {"is_syncing": False}), \
                  patch("bot_engine.db.get_all_target_msg_mappings", AsyncMock(return_value=[(-1, 20, "saved")])), \
+                 patch("bot_engine.db.get_target_msg_id", AsyncMock(return_value=20)), \
                  patch("bot_engine.db.apply_message_filters", AsyncMock(return_value=(False, "new"))), \
                  patch("bot_engine.build_link_rewrite_context", AsyncMock(return_value=None)), \
                  patch("bot_engine.rewrite_message_links", AsyncMock(return_value=("new", 0))), \
@@ -1102,7 +1109,7 @@ class SyncServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result["status"], "success")
             mock_close.assert_awaited_once()
-            mock_delete.assert_awaited_once_with(sync_services.SAVED_MESSAGES_TARGET_ID)
+            mock_delete.assert_not_awaited()
         finally:
             allow_edit_to_finish.set()
             bot_engine.aiogram_bot = original_bot
