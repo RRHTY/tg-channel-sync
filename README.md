@@ -12,9 +12,9 @@
 
 **Web 页面**
 
-| 首页 | 设置 |
-| :------: | :------: |
-| <img width="1789" height="1539" alt="image" src="https://github.com/user-attachments/assets/47a43c9e-aa65-449e-b24b-1878234051ae" /> | <img width="1789" height="2385" alt="image" src="https://github.com/user-attachments/assets/b18e99f1-e5cb-4662-9a72-f789f1964399" /> |
+| 首页样式1 | 首页样式2 | 设置 |
+| :------: | :------: |:------: |
+|<img width="1462" height="2155" alt="image" src="https://github.com/user-attachments/assets/0a326892-f753-4794-95bd-5870ca2c4f92" /> |<img width="1462" height="1054" alt="image" src="https://github.com/user-attachments/assets/4d7efb37-f610-446f-90c9-57230bc07738" /> | <img width="1462" height="2548" alt="image" src="https://github.com/user-attachments/assets/cc4bcb13-d747-4ba3-844b-c3a829be6e54" /> |
 
 ---
 
