@@ -33,6 +33,7 @@ from services.sync_services import (
     SAVED_MESSAGES_TARGET_ID,
     format_channel_check_error,
     is_saved_messages_target,
+    is_temporary_network_error,
     normalize_channel_username,
     resolve_chat_id,
 )
@@ -85,9 +86,9 @@ async def _ensure_bot_engine_loaded():
     global bot_engine, bot_engine_module, bot_engine_load_task
     if bot_engine_module is not None:
         return bot_engine_module
-    if bot_engine_load_task is None:
+    if bot_engine_load_task is None or bot_engine_load_task.cancelled():
         bot_engine_load_task = asyncio.create_task(asyncio.to_thread(importlib.import_module, "bot_engine"))
-    bot_engine_module = await bot_engine_load_task
+    bot_engine_module = await asyncio.shield(bot_engine_load_task)
     bot_engine = bot_engine_module
     return bot_engine_module
 
@@ -152,20 +153,25 @@ async def _force_cleanup():
 
     loaded_bot_engine = _get_loaded_bot_engine()
 
-    if polling_task and loaded_bot_engine is not None:
+    if polling_task:
         try:
             if not polling_task.done():
-                try:
-                    await loaded_bot_engine.dp.stop_polling()
-                except RuntimeError:
-                    pass
+                if loaded_bot_engine is not None:
+                    try:
+                        await asyncio.wait_for(loaded_bot_engine.dp.stop_polling(), timeout=5)
+                    except RuntimeError:
+                        pass
+                else:
+                    polling_task.cancel()
             await asyncio.wait_for(polling_task, timeout=5)
         except asyncio.TimeoutError:
             polling_task.cancel()
             try:
                 await polling_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
+        except asyncio.CancelledError:
+            pass
         except Exception:
             pass
         polling_task = None
@@ -214,23 +220,52 @@ def _reset_startup_app_info() -> None:
     )
 
 
+async def _get_bot_me_with_retry(bot):
+    from aiogram.exceptions import TelegramNetworkError
+    from aiohttp_socks import ProxyConnectionError, ProxyTimeoutError
+
+    for attempt in range(3):
+        if SHUTDOWN_EVENT.is_set():
+            raise asyncio.CancelledError
+        try:
+            return await bot.get_me(request_timeout=10)
+        except Exception as exc:
+            temporary = isinstance(exc, (
+                TelegramNetworkError, asyncio.TimeoutError, ProxyConnectionError, ProxyTimeoutError,
+            )) or (
+                isinstance(exc, OSError) and is_temporary_network_error(exc)
+            )
+            if not temporary or attempt == 2:
+                raise
+            wait_seconds = 2 * (attempt + 1)
+            await db.add_sys_log(
+                "WARNING",
+                f"Bot 连接暂时失败，{wait_seconds} 秒后自动重试 ({attempt + 1}/2): {exc}",
+            )
+            await asyncio.sleep(wait_seconds)
+
+
 async def _initialize_clients_in_background() -> None:
     global polling_task, public_channel_polling_task
     if SHUTDOWN_EVENT.is_set():
         return
     loaded_bot_engine = await _ensure_bot_engine_loaded()
+    from aiogram.exceptions import TelegramUnauthorizedError
+    from aiogram.utils.token import TokenValidationError
 
     try:
         bot = loaded_bot_engine.init_bot_client()
         if bot and not SHUTDOWN_EVENT.is_set():
             try:
-                me = await bot.get_me()
+                me = await _get_bot_me_with_retry(bot)
+            except (TelegramUnauthorizedError, TokenValidationError):
+                raise
             except Exception as exc:
                 if loaded_bot_engine.has_local_bot_api_server() and loaded_bot_engine.is_using_local_bot_api():
                     await db.add_sys_log("WARNING", f"BOT_API_BASE_URL 不可用，已回退官方 Bot API: {exc}")
                     await loaded_bot_engine.close_bot_client()
                     bot = loaded_bot_engine.init_bot_client(use_local_api=False)
-                    me = await bot.get_me()
+                    me = await _get_bot_me_with_retry(bot)
                 else:
                     raise
             refresh_app_info({"name": me.first_name, "username": me.username, "status": STATUS_CONNECTED})
@@ -546,10 +581,9 @@ async def clear_message_logs():
 @app.post("/api/server/stop")
 async def stop_server():
     async def shutdown():
-        global _cleanup_done, STOP_REQUESTED, RESTART_REQUESTED
-        if _cleanup_done:
+        global STOP_REQUESTED, RESTART_REQUESTED
+        if STOP_REQUESTED or RESTART_REQUESTED or SHUTDOWN_EVENT.is_set():
             return
-        _cleanup_done = True
         STOP_REQUESTED = True
         RESTART_REQUESTED = False
         await db.add_sys_log("WARNING", "收到关闭服务请求，正在停止服务...")
@@ -563,10 +597,9 @@ async def stop_server():
 @app.post("/api/server/restart")
 async def restart_server():
     async def restart():
-        global _cleanup_done, RESTART_REQUESTED, STOP_REQUESTED
-        if _cleanup_done:
+        global RESTART_REQUESTED, STOP_REQUESTED
+        if RESTART_REQUESTED or STOP_REQUESTED or SHUTDOWN_EVENT.is_set():
             return
-        _cleanup_done = True
         RESTART_REQUESTED = True
         STOP_REQUESTED = False
         await db.add_sys_log("WARNING", "收到重启服务请求，正在准备重启...")
@@ -950,25 +983,45 @@ async def start_sync(
 
 
 def run_server():
-    global SERVER, _cleanup_done
-    SHUTDOWN_EVENT.clear()
-    _cleanup_done = False
-    config = get_config()
-    configure_terminal_logging()
-    server_cfg = resolve_server_config(config["server"])
-    host = str(server_cfg["host"])
-    port = int(server_cfg["port"])
-    if should_auto_open_browser(server_cfg):
-        launch_browser_when_ready(host, port, SHUTDOWN_EVENT)
-    uvicorn_config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        timeout_keep_alive=0,
-    )
-    SERVER = uvicorn.Server(uvicorn_config)
-    SERVER.run()
-    SERVER = None
+    async def serve_until_stopped():
+        global SERVER, _cleanup_done, RESTART_REQUESTED, STOP_REQUESTED
+        while True:
+            SHUTDOWN_EVENT.clear()
+            _cleanup_done = False
+            RESTART_REQUESTED = False
+            STOP_REQUESTED = False
+            config = get_config()
+            configure_terminal_logging()
+            server_cfg = resolve_server_config(config["server"])
+            host = str(server_cfg["host"])
+            port = int(server_cfg["port"])
+            if should_auto_open_browser(server_cfg):
+                launch_browser_when_ready(host, port, SHUTDOWN_EVENT)
+            uvicorn_config = uvicorn.Config(
+                app,
+                host=host,
+                port=port,
+                timeout_keep_alive=0,
+            )
+            SERVER = uvicorn.Server(uvicorn_config)
+            try:
+                await SERVER.serve()
+            finally:
+                SERVER = None
+            # Preserve the old asyncio.run shutdown boundary for work from this cycle.
+            remaining_tasks = [
+                task for task in asyncio.all_tasks()
+                if task is not asyncio.current_task() and task is not bot_engine_load_task
+            ]
+            for task in remaining_tasks:
+                task.cancel()
+            await asyncio.gather(*remaining_tasks, return_exceptions=True)
+            if not RESTART_REQUESTED:
+                return
+            print("[INFO] 服务已停止，正在当前终端重新启动...")
+
+    # Dispatcher and other async clients keep their event-loop bindings across restarts.
+    asyncio.run(serve_until_stopped())
 
 if __name__ == "__main__":
     if "--bundle-smoke" in sys.argv:
@@ -985,10 +1038,4 @@ if __name__ == "__main__":
     if not reuse_existing_instance_or_exit(startup_host, startup_port, startup_auto_open_browser):
         raise SystemExit(0)
 
-    while True:
-        run_server()
-        if RESTART_REQUESTED:
-            RESTART_REQUESTED = False
-            print("[INFO] 服务已停止，正在当前终端重新启动...")
-            continue
-        break
+    run_server()
