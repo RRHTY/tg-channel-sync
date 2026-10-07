@@ -6,8 +6,8 @@ const AppCard = {
 const SectionHeader = {
   props: ["title", "description", "titleClass", "descriptionClass"],
   template: `<div class="section-header">
-    <h2 :class="titleClass || 'section-title'">{{ title }}</h2>
-    <p v-if="description" :class="descriptionClass || 'section-description'">{{ description }}</p>
+    <h2 :class="titleClass || 'section-title'">{{ $t(title) }}</h2>
+    <p v-if="description" :class="descriptionClass || 'section-description'">{{ $t(description) }}</p>
   </div>`,
 };
 
@@ -48,14 +48,14 @@ const FieldGroup = {
   },
   template: `<div :class="wrapperClass || 'field-group'">
     <div v-if="label || badge" class="field-label-row">
-      <label v-if="label" :class="labelClass || 'field-label'">{{ label }}</label>
+      <label v-if="label" :class="labelClass || 'field-label'">{{ $t(label) }}</label>
       <span
         v-if="badge"
         :class="badgeClass || 'field-badge'"
-      >{{ badge }}</span>
+      >{{ $t(badge) }}</span>
     </div>
     <slot></slot>
-    <p v-if="hint" :id="fieldId + '-hint'" :class="hintClass || 'field-hint'">{{ hint }}</p>
+    <p v-if="hint" :id="fieldId + '-hint'" :class="hintClass || 'field-hint'">{{ $t(hint) }}</p>
   </div>`,
 };
 
@@ -64,7 +64,7 @@ const FieldBadge = {
   template: `<span
     class="field-badge"
     :class="tone === 'muted' ? 'field-badge-muted' : ''"
-  >{{ text }}</span>`,
+  >{{ $t(text) }}</span>`,
 };
 
 const ActionBar = {
@@ -76,24 +76,24 @@ const ToastBanner = {
   props: ["notice"],
   template: `<div v-if="notice && notice.message" role="status" aria-live="polite" class="mb-4 rounded-xl border px-4 py-3 text-sm shadow-sm"
     :class="notice.type === 'error' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-700'">
-    {{ notice.message }}
+    {{ $tm(notice.message) }}
   </div>`,
 };
 
 const EmptyState = {
   props: ["text"],
-  template: `<div class="empty-state">{{ text || '暂无数据' }}</div>`,
+  template: `<div class="empty-state">{{ $t(text || '暂无数据') }}</div>`,
 };
 
 const SettingSectionNav = {
   props: ["items"],
-  template: `<nav class="settings-section-nav" aria-label="设置分区导航">
+  template: `<nav class="settings-section-nav" :aria-label="$t('设置分区导航')">
     <a
       v-for="item in items"
       :key="item.id"
       :href="'#' + item.id"
       class="settings-section-link"
-    >{{ item.label }}</a>
+    >{{ $t(item.label) }}</a>
   </nav>`,
 };
 
@@ -104,10 +104,10 @@ const SettingGroup = {
     <div class="settings-group-header">
       <div class="settings-group-copy">
         <div class="settings-group-title-row">
-          <h3 class="settings-group-title">{{ title }}</h3>
+          <h3 class="settings-group-title">{{ $t(title) }}</h3>
           <field-badge v-if="badge" :text="badge" tone="muted"></field-badge>
         </div>
-        <p v-if="description" class="settings-group-description">{{ description }}</p>
+        <p v-if="description" class="settings-group-description">{{ $t(description) }}</p>
       </div>
     </div>
     <div :class="bodyClass || 'settings-group-body'"><slot></slot></div>
@@ -129,10 +129,10 @@ const ToggleField = {
   >
     <span class="toggle-field-copy">
       <span class="toggle-field-title-row">
-        <span class="toggle-field-title">{{ label }}</span>
+        <span class="toggle-field-title">{{ $t(label) }}</span>
         <field-badge v-if="badge" :text="badge" tone="muted"></field-badge>
       </span>
-      <span v-if="description" class="toggle-field-description">{{ description }}</span>
+      <span v-if="description" class="toggle-field-description">{{ $t(description) }}</span>
     </span>
     <input
       type="checkbox"
@@ -149,13 +149,13 @@ const MappingOptionBadges = {
   computed: {
     badges() {
       const item = this.item || {};
-      const values = [`发送:${item.realtime_sender === "user" ? "Telegram 账号" : "Bot"}`];
+      const values = [this.$t("发送：{sender}", { sender: this.$t(item.realtime_sender === "user" ? "Telegram 账号" : "机器人") })];
       if (item.source_mode === "public_user") {
-        values.push("获取:Telegram 账号");
+        values.push(this.$t("读取：{reader}", { reader: this.$t("Telegram 账号") }));
       } else {
-        values.push(`获取:${item.realtime_fallback_to_user ? "Bot/Telegram 账号" : "Bot"}`);
+        values.push(this.$t("读取：{reader}", { reader: item.realtime_fallback_to_user ? "Bot / " + this.$t("Telegram 账号") : "Bot" }));
       }
-      if (item.realtime_hash_perturb) values.push("修改文件哈希");
+      if (item.realtime_hash_perturb) values.push(this.$t("修改文件哈希"));
       return values;
     },
   },
@@ -197,15 +197,15 @@ const SenderIdentityOptions = {
   },
   template: `<div class="identity-panel">
     <div class="identity-row">
-      <span class="identity-label">用谁发送</span>
-      <label class="identity-option"><input type="radio" :checked="sender === 'bot'" value="bot" @change="onSenderChange">机器人</label>
-      <label class="identity-option"><input type="radio" :checked="sender === 'user'" value="user" @change="onSenderChange">Telegram 账号</label>
+      <span class="identity-label">{{ $t('用谁发送') }}</span>
+      <label class="identity-option"><input type="radio" :checked="sender === 'bot'" value="bot" @change="onSenderChange">{{ $t('机器人') }}</label>
+      <label class="identity-option"><input type="radio" :checked="sender === 'user'" value="user" @change="onSenderChange">{{ $t('Telegram 账号') }}</label>
     </div>
     <label v-if="sender === 'bot'" class="identity-option text-xs text-slate-600">
-      <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">机器人发送失败时，改用 Telegram 账号
+      <input type="checkbox" :checked="fallbackChecked" @change="onFallbackChange">{{ $t('机器人发送失败时，改用 Telegram 账号') }}
     </label>
     <label v-if="showHashOption" class="identity-option text-xs text-slate-600">
-      <input type="checkbox" :checked="hashChecked" @change="onHashChange">修改图片和视频的哈希（画面不变）
+      <input type="checkbox" :checked="hashChecked" @change="onHashChange">{{ $t('修改图片和视频的哈希（画面不变）') }}
     </label>
   </div>`,
 };
@@ -241,13 +241,13 @@ const LogPanel = {
     <div class="panel-heading">
       <div>
 
-        <h2 class="panel-title">{{ title }}</h2>
+        <h2 class="panel-title">{{ $t(title) }}</h2>
 
       </div>
       <div class="log-actions">
-        <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">导出</button>
-        <button @click="scrollToBottom" class="btn-secondary btn-inline !px-3 !py-1 text-xs">跳至底部</button>
-        <button @click="$emit('clear')" class="delete-action">清理</button>
+        <button @click="$emit('export')" class="btn-secondary btn-inline !px-3 !py-1 text-xs">{{ $t('导出') }}</button>
+        <button @click="scrollToBottom" class="btn-secondary btn-inline !px-3 !py-1 text-xs">{{ $t('跳至底部') }}</button>
+        <button @click="$emit('clear')" class="delete-action">{{ $t('清理') }}</button>
       </div>
     </div>
     <div :id="panelId" class="log-panel">
@@ -260,12 +260,47 @@ const LogPanel = {
           <div class="min-w-0 break-all text-slate-200">{{ body(log) }}</div>
         </div>
       </div>
-      <div v-if="!(logs || []).length" class="text-slate-500">暂无{{ title }}</div>
+      <div v-if="!(logs || []).length" class="text-slate-500">{{ $t('暂无日志') }}</div>
     </div>
   </app-card>`,
 };
 
+const LanguageSelect = {
+  components: { FieldGroup },
+  template: `<field-group label="语言 / Language" wrapper-class="field-group language-select">
+    <select class="input-box" :value="$languagePreference" @change="$setLanguage($event.target.value)">
+      <option value="auto">{{ $t('跟随浏览器') }}</option>
+      <option value="zh" lang="zh-CN">简体中文</option>
+      <option value="en" lang="en">English</option>
+    </select>
+  </field-group>`,
+};
+
+const LanguageMenu = {
+  methods: {
+    choose(value) {
+      this.$setLanguage(value);
+      this.$el.open = false;
+      this.$el.querySelector('summary')?.focus();
+    },
+  },
+  template: `<details class="language-menu" @keydown.esc="$el.open = false; $el.querySelector('summary').focus()">
+    <summary :aria-label="$t('切换语言')" :title="$t('切换语言')">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/>
+      </svg>
+    </summary>
+    <div class="language-menu-popover" role="group" :aria-label="$t('语言 / Language')">
+      <button type="button" :aria-pressed="$languagePreference === 'auto'" @click="choose('auto')">{{ $t('跟随浏览器') }}</button>
+      <button type="button" lang="zh-CN" :aria-pressed="$languagePreference === 'zh'" @click="choose('zh')">简体中文</button>
+      <button type="button" lang="en" :aria-pressed="$languagePreference === 'en'" @click="choose('en')">English</button>
+    </div>
+  </details>`,
+};
+
 window.TgcsUi = {
+  LanguageSelect,
+  LanguageMenu,
   AppCard,
   SectionHeader,
   FormSection,

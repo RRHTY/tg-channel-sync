@@ -25,6 +25,8 @@ Configure Telegram access, mappings and filters, and monitor tasks and logs in y
 
 支持类型与正则过滤、尽量恢复回复关系、消息链接改写、历史任务续传及多 Bot 上传池。具体支持范围见[功能矩阵](docs/usage.md#功能矩阵)。
 
+界面支持简体中文和 English，默认跟随浏览器语言。可通过顶部语言图标、首次设置页或主题设置即时切换，选择保存在当前浏览器中。
+
 JSON 导入仍有问题待修复，建议先验证少量消息。
 
 ## 快速开始

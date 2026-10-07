@@ -14,7 +14,9 @@
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="/static/app.css?v=8">
+    <script src="/static/locales/en.js?v=1"></script>
+    <script src="/static/i18n.js?v=1"></script>
+    <link rel="stylesheet" href="/static/app.css?v=9">
 </head>
 <body class="text-gray-800 font-sans">
 <div id="app" class="app-shell">
@@ -22,13 +24,13 @@
         <div class="brand-block">
             <span class="brand-mark" aria-hidden="true">杏</span>
             <div>
-                <h1 class="brand-title">杏铃同步台</h1>
+                <h1 class="brand-title">{{ $t('杏铃同步台') }}</h1>
             </div>
         </div>
         <div class="header-actions">
-            <nav v-if="currentView !== 'setup'" class="app-nav" aria-label="主导航">
-                <button @click="navigateTo('home')" :class="navButtonClass('home')" class="nav-btn">主页</button>
-                <button @click="openSettings" :class="navButtonClass('settings')" class="nav-btn">设置</button>
+            <nav v-if="currentView !== 'setup'" class="app-nav" :aria-label="$t('主导航')">
+                <button @click="navigateTo('home')" :class="navButtonClass('home')" class="nav-btn">{{ $t('主页') }}</button>
+                <button @click="openSettings" :class="navButtonClass('settings')" class="nav-btn">{{ $t('设置') }}</button>
             </nav>
             <div class="header-meta">
                 <a
@@ -40,25 +42,26 @@
                         ? 'version-badge-muted'
                         : 'version-badge-update'"
                     :title="versionInfo.status === 'error'
-                        ? ('当前版本 ' + versionInfo.current_version + '，新版检测失败')
-                        : ('当前 ' + versionInfo.current_version + ' / 最新 ' + (versionInfo.latest_version || '未知'))"
+                        ? $t('当前版本 {version}，新版检测失败', {version: versionInfo.current_version})
+                        : $t('当前 {current} / 最新 {latest}', {current: versionInfo.current_version, latest: versionInfo.latest_version || $t('未知')})"
                 >
                     {{ versionInfo.status === 'error'
-                        ? ('当前 ' + versionInfo.current_version)
-                        : ('发现新版 ' + versionInfo.latest_version) }}
+                        ? $t('当前 {version}', {version: versionInfo.current_version})
+                        : $t('发现新版 {version}', {version: versionInfo.latest_version}) }}
                 </a>
-                <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="icon-link" aria-label="打开 GitHub 仓库" title="GitHub 仓库">
+                <language-menu></language-menu>
+                <a href="https://github.com/RRHTY/tg-channel-sync" target="_blank" class="icon-link" :aria-label="$t('打开 GitHub 仓库')" :title="$t('GitHub 仓库')">
                     <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                 </a>
                 <details v-if="currentView !== 'setup'" class="service-menu">
-                    <summary aria-label="服务操作" title="服务操作">•••</summary>
+                    <summary :aria-label="$t('服务操作')" :title="$t('服务操作')">•••</summary>
                     <div class="service-menu-popover">
-                        <div class="service-menu-title">服务操作</div>
+                        <div class="service-menu-title">{{ $t('服务操作') }}</div>
                         <button @click="restartServer" :disabled="serverAction==='restart'" class="service-action">
-                            {{ serverAction==='restart' ? '重启中...' : '重启服务' }}
+                            {{ $t(serverAction==='restart' ? '重启中...' : '重启服务') }}
                         </button>
                         <button @click="stopServer" :disabled="serverAction==='stop'" class="service-action service-action-danger">
-                            {{ serverAction==='stop' ? '关闭中...' : '关闭服务' }}
+                            {{ $t(serverAction==='stop' ? '关闭中...' : '关闭服务') }}
                         </button>
                     </div>
                 </details>
@@ -68,8 +71,8 @@
 
     <toast-banner :notice="notice"></toast-banner>
     <div v-if="connectionState !== 'connected'" class="connection-banner" role="status">
-        <span>{{ connectionState === 'offline' ? '服务已关闭，页面状态已停止更新。' : (connectionState === 'connecting' ? '正在连接并更新状态…' : '连接中断，正在自动重连；任务可能仍在后台运行。') }}<small v-if="lastStatusAt">上次更新 {{ new Date(lastStatusAt).toLocaleTimeString('zh-CN', {hour12:false}) }}</small></span>
-        <button type="button" class="text-action" @click="setupSSE">重新连接</button>
+        <span>{{ $t(connectionState === 'offline' ? '服务已关闭，页面状态已停止更新。' : (connectionState === 'connecting' ? '正在连接并更新状态…' : '连接中断，正在自动重连；任务可能仍在后台运行。')) }}<small v-if="lastStatusAt">{{ $t('上次更新 {time}', {time: new Date(lastStatusAt).toLocaleTimeString($language === 'zh' ? 'zh-CN' : 'en', {hour12:false})}) }}</small></span>
+        <button type="button" class="text-action" @click="setupSSE">{{ $t('重新连接') }}</button>
     </div>
 
     <setup-wizard v-if="currentView === 'setup'" :config="configForm" :saving="configSaving" @save="saveSetup"></setup-wizard>
@@ -77,24 +80,24 @@
     <div v-if="currentView !== 'setup'" v-show="currentView === 'home'" class="home-workspaces">
         <status-overview :app-info="appInfo" :status="syncStatus" @open-settings="openSettings" @open-history="selectWorkspace('history')"></status-overview>
         <div class="workspace-layout" :class="{ 'workspace-layout-single': isSinglePage }">
-            <nav v-show="!isSinglePage" class="workspace-nav" aria-label="同步工作区">
-                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'history' ? 'true' : undefined" aria-controls="workspace-history" @click="selectWorkspace('history')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2-5.3M4 4v6h6M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>历史同步</span></button>
-                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'automatic' ? 'true' : undefined" aria-controls="workspace-automatic" @click="selectWorkspace('automatic')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 7h14m-4-4 4 4-4 4M19 17H5m4-4-4 4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>自动同步</span><small>{{ (mappings.mappings || []).length }}</small></button>
-                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'filters' ? 'true' : undefined" aria-controls="workspace-filters" @click="selectWorkspace('filters')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z" stroke-linecap="round" stroke-linejoin="round"/></svg><span>内容过滤</span><small>{{ filterRules.length }}</small></button>
-                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'logs' ? 'true' : undefined" aria-controls="workspace-logs" @click="selectWorkspace('logs')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v16H5V5a2 2 0 0 1 2-2ZM9 8h6M9 12h6M9 16h4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>运行日志</span></button>
-                <button v-if="syncStatus.is_syncing" type="button" class="workspace-task" @click="selectWorkspace('history')">任务运行中<small>{{ syncStatus.current }} / {{ syncStatus.total }}</small></button>
+            <nav v-show="!isSinglePage" class="workspace-nav" :aria-label="$t('同步工作区')">
+                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'history' ? 'true' : undefined" aria-controls="workspace-history" @click="selectWorkspace('history')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2-5.3M4 4v6h6M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ $t('历史同步') }}</span></button>
+                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'automatic' ? 'true' : undefined" aria-controls="workspace-automatic" @click="selectWorkspace('automatic')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 7h14m-4-4 4 4-4 4M19 17H5m4-4-4 4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ $t('自动同步') }}</span><small>{{ (mappings.mappings || []).length }}</small></button>
+                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'filters' ? 'true' : undefined" aria-controls="workspace-filters" @click="selectWorkspace('filters')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ $t('内容过滤') }}</span><small>{{ filterRules.length }}</small></button>
+                <button type="button" class="workspace-link" :aria-current="workspaceSection === 'logs' ? 'true' : undefined" aria-controls="workspace-logs" @click="selectWorkspace('logs')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v16H5V5a2 2 0 0 1 2-2ZM9 8h6M9 12h6M9 16h4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{{ $t('运行日志') }}</span></button>
+                <button v-if="syncStatus.is_syncing" type="button" class="workspace-task" @click="selectWorkspace('history')">{{ $t('任务运行中') }}<small>{{ syncStatus.current }} / {{ syncStatus.total }}</small></button>
             </nav>
             <main class="workspace-body">
-                <section id="workspace-history" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'history'" aria-label="历史同步">
+                <section id="workspace-history" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'history'" :aria-label="$t('历史同步')">
                     <sync-panel :connected="connectionState === 'connected'" :has-last-params="!!lastSyncParams" @restore="restoreLastSyncParams" @forget="clearLastSyncParams" :user-auth="userAuth" @open-settings="openSettings" @open-logs="selectWorkspace('logs')" :status="syncStatus" :form="syncForm" :stopping="stopping" :starting="syncStarting" @start="startSync" @stop="stopSync"></sync-panel>
                 </section>
-                <section id="workspace-automatic" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'automatic'" aria-label="自动同步">
+                <section id="workspace-automatic" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'automatic'" :aria-label="$t('自动同步')">
                     <channel-mapping :mappings="mappings" :save-mapping="addMapping" :update-mapping="updateMapping" @use="useMapping" @del="deleteMapping" @log-error="showAppError"></channel-mapping>
                 </section>
-                <section id="workspace-filters" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'filters'" aria-label="内容过滤">
+                <section id="workspace-filters" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'filters'" :aria-label="$t('内容过滤')">
                     <global-filters :settings="settings" :rules="filterRules" :new-rule="newFilter" :saving="filterSaving" @save-settings="saveGlobalSettings" @add-rule="addFilter" @del-rule="deleteFilter"></global-filters>
                 </section>
-                <section id="workspace-logs" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'logs'" aria-label="运行日志">
+                <section id="workspace-logs" class="workspace-pane" v-show="isSinglePage || workspaceSection === 'logs'" :aria-label="$t('运行日志')">
                     <log-viewer :sys-logs="sysLogs" :msg-logs="msgLogs" @clear-sys-logs="clearSystemLogs" @clear-msg-logs="clearMessageLogs" @export-sys-logs="exportSystemLogs" @export-msg-logs="exportMessageLogs"></log-viewer>
                 </section>
             </main>
@@ -105,13 +108,13 @@
     <settings-panel v-if="currentView !== 'setup'" v-show="currentView === 'settings'" :config="configForm" :saving="configSaving" :user-auth="userAuth" :auth-submitting="authSubmitting" :send-code-cooldown="sendCodeCooldown" @preview-theme="applyTheme" @save-config="saveSettingsPage" @save-restart="saveAndRestart" @send-code="sendUserCode" @verify-code="verifyUserCode" @submit-password="submitUserPassword" @cancel-auth="cancelUserAuth" @switch-account="switchUserAccount"></settings-panel>
 
     <footer class="app-footer">
-        <span>杏铃同步台</span>
+        <span>{{ $t('杏铃同步台') }}</span>
         <span>{{ versionInfo.current_version || 'unknown' }}</span>
     </footer>
 </div>
-<script src="/static/ui-components.js?v=7"></script>
+<script src="/static/ui-components.js?v=8"></script>
 <script src="/static/api-client.js"></script>
-<script src="/static/app-methods.js?v=10"></script>
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app-methods.js?v=11"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>

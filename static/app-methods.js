@@ -1,5 +1,6 @@
 (() => {
   const api = window.TgcsApi;
+  const translateMessage = (text) => window.TgcsI18n ? window.TgcsI18n.translateMessage(text) : text;
   const syncParamKeys = ['mode', 'sender', 'source_id', 'target_id', 'start_id', 'end_id', 'json_path', 'json_source_username', 'json_media_group_window_seconds', 'delay', 'force_send', 'hash_perturb', 'clone_fallback_to_user', 'target_type'];
   function cleanSyncParams(value) {
     if (!value || !['api', 'json', 'clone'].includes(value.mode)) return null;
@@ -92,7 +93,8 @@
       }, 4000);
     },
     pushSystemNotice(message, level = "WARNING") {
-      const time = new Date().toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-");
+      const locale = window.TgcsI18n?.state.language === "en" ? "en" : "zh-CN";
+      const time = new Date().toLocaleString(locale, { hour12: false }).replace(/\//g, "-");
       this.sysLogs = [...this.sysLogs, { id: `local-${Date.now()}`, time, level, msg: message }].slice(-100);
       this.$nextTick(() => this.scrollLogsToBottom({ sys: true, msg: false }));
     },
@@ -310,7 +312,7 @@
       window.open("/api/logs/message/export", "_blank", "noopener");
     },
     async clearSystemLogs() {
-      if (!window.confirm("确认清理系统日志吗？")) return;
+      if (!window.confirm(translateMessage("确认清理系统日志吗？"))) return;
       try {
         const res = api.ensureSuccess(await api.deleteJson("/api/logs/system"), "清理系统日志失败");
         this.sysLogs = [];
@@ -322,7 +324,7 @@
       }
     },
     async clearMessageLogs() {
-      if (!window.confirm("确认清理消息日志吗？")) return;
+      if (!window.confirm(translateMessage("确认清理消息日志吗？"))) return;
       try {
         const res = api.ensureSuccess(await api.deleteJson("/api/logs/message"), "清理消息日志失败");
         this.msgLogs = [];
@@ -335,7 +337,7 @@
     },
     async restartServer() {
       if (this.serverAction) return;
-      if (!window.confirm("确认重启服务吗？")) return;
+      if (!window.confirm(translateMessage("确认重启服务吗？"))) return;
       this.serverAction = "restart";
       try {
         const res = api.ensureSuccess(await api.postJson("/api/server/restart", {}), "重启服务失败");
@@ -351,7 +353,7 @@
     },
     async stopServer() {
       if (this.serverAction) return;
-      if (!window.confirm("确认关闭服务吗？")) return;
+      if (!window.confirm(translateMessage("确认关闭服务吗？"))) return;
       this.serverAction = "stop";
       try {
         const res = api.ensureSuccess(await api.postJson("/api/server/stop", {}), "关闭服务失败");
@@ -593,7 +595,7 @@
       }
     },
     async switchUserAccount() {
-      if (!window.confirm("要切换 Telegram 账号吗？\n当前账号会退出登录，你需要重新登录另一个账号。")) return;
+      if (!window.confirm(translateMessage("要切换 Telegram 账号吗？\n当前账号会退出登录，你需要重新登录另一个账号。"))) return;
       this.authSubmitting = true;
       try {
         const res = api.ensureSuccess(await api.postJson("/api/user_auth/switch_account", {}), "切换账号失败");

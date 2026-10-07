@@ -50,6 +50,8 @@ For an existing installation, keep your current `config.json`. PowerShell comman
 
 Open `http://127.0.0.1:8011` and configure a Bot Token. API history copy and media re-upload also require API ID, API Hash, and auxiliary-account login. Keep `config.json` and `data/` when moving an installation or making a backup.
 
+The UI supports English and Simplified Chinese. It uses the first supported browser language, falling back to English. Change it from the language icon beside GitHub, initial setup, or theme settings. Changes apply immediately and are remembered in your browser. Channel names, rule content, current message previews, and raw logs keep their original text.
+
 > [!WARNING]
 > The Web UI has no built-in authentication. Access is local-only by default. For remote access, use a VPN or an authenticated reverse proxy; do not expose the console directly to the public internet.
 

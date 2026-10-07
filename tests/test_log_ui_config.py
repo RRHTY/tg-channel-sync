@@ -17,8 +17,8 @@ class LogUiConfigTests(unittest.TestCase):
     def test_setup_and_settings_reuse_form_layout_components(self):
         content = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn("components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint }", content)
-        self.assertIn("components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint, UserAuthPanel, SettingSectionNav, SettingGroup, ToggleField, FieldBadge }", content)
+        self.assertIn("components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint, LanguageSelect }", content)
+        self.assertIn("components:{ AppCard, SectionHeader, FormSection, FieldGroup, ActionBar, BotApiHint, UserAuthPanel, SettingSectionNav, SettingGroup, ToggleField, FieldBadge, LanguageSelect }", content)
         self.assertIn("<form-section", content)
         self.assertIn("<field-group", content)
         self.assertIn("<action-bar", content)
