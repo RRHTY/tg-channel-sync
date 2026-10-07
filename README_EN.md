@@ -29,9 +29,9 @@ Download and extract the appropriate archive from [Releases](https://github.com/
 - **Linux x64:** run the executable after granting execute permission:
 
   ```bash
-  cd tg-channel-sync-v0.5.4-linux-x64
-  chmod +x tg-channel-sync-v0.5.4-linux-x64
-  ./tg-channel-sync-v0.5.4-linux-x64
+  cd tg-channel-sync-v0.5.5-linux-x64
+  chmod +x tg-channel-sync-v0.5.5-linux-x64
+  ./tg-channel-sync-v0.5.5-linux-x64
   ```
 
 The Linux executable requires **glibc ≥ 2.35**; Alpine/musl is unsupported. Use Docker Compose when appropriate for your server.

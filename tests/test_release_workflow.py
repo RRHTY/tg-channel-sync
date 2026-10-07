@@ -26,20 +26,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
         dockerignore = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
         self.assertIn("dist-release/", dockerignore)
 
-    def test_v054_docs_describe_native_downloads_without_legacy_packages(self):
+    def test_current_release_docs_describe_native_downloads_without_legacy_packages(self):
         version = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-        release_notes = (PROJECT_ROOT / "docs/releases/v0.5.4.md").read_text(encoding="utf-8")
+        english_readme = (PROJECT_ROOT / "README_EN.md").read_text(encoding="utf-8")
+        release_notes = (PROJECT_ROOT / f"docs/releases/{version}.md").read_text(encoding="utf-8")
 
-        self.assertEqual(version, "v0.5.4")
-        self.assertIn("tg-channel-sync-v0.5.4-windows-x64.zip", readme)
-        self.assertIn("tg-channel-sync-v0.5.4-linux-x64.zip", readme)
-        self.assertIn("cd tg-channel-sync-v0.5.4-linux-x64", readme)
+        self.assertRegex(version, r"^v\d+\.\d+\.\d+$")
+        self.assertIn(f"tg-channel-sync-{version}-windows-x64.zip", readme)
+        self.assertIn(f"tg-channel-sync-{version}-linux-x64.zip", readme)
+        self.assertIn(f"cd tg-channel-sync-{version}-linux-x64", readme)
+        self.assertIn(f"cd tg-channel-sync-{version}-linux-x64", english_readme)
         self.assertIn("Docker Compose", readme)
         self.assertNotIn("windows-x64-portable.zip", readme)
         self.assertNotIn("windows-x64-full.zip", readme)
         self.assertNotIn("build-portable.ps1", readme)
         self.assertIn("下载与你系统对应的压缩包", release_notes)
+        self.assertIn(f"## 杏铃同步台 {version}", release_notes)
+        self.assertIn(f"tg-channel-sync-{version}-windows-x64.zip", release_notes)
+        self.assertIn(f"tg-channel-sync-{version}-linux-x64.zip", release_notes)
         self.assertIn("### 稳定性与正确性", release_notes)
         self.assertIn("### 界面与操作", release_notes)
 

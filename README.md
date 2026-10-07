@@ -35,13 +35,13 @@ JSON 导入仍有问题待修复，建议先验证少量消息。
 
 从 [Releases](https://github.com/RRHTY/tg-channel-sync/releases) 下载对应压缩包，解压后运行，无需安装 Python。
 
-- **Windows x64**：下载 `tg-channel-sync-v0.5.4-windows-x64.zip`，双击 `.exe`。
-- **Linux x64**：下载 `tg-channel-sync-v0.5.4-linux-x64.zip`，解压后执行：
+- **Windows x64**：下载 `tg-channel-sync-v0.5.5-windows-x64.zip`，双击 `.exe`。
+- **Linux x64**：下载 `tg-channel-sync-v0.5.5-linux-x64.zip`，解压后执行：
 
   ```bash
-  cd tg-channel-sync-v0.5.4-linux-x64
-  chmod +x tg-channel-sync-v0.5.4-linux-x64
-  ./tg-channel-sync-v0.5.4-linux-x64
+  cd tg-channel-sync-v0.5.5-linux-x64
+  chmod +x tg-channel-sync-v0.5.5-linux-x64
+  ./tg-channel-sync-v0.5.5-linux-x64
   ```
 
 Linux 原生包要求 glibc ≥ 2.35，不支持 Alpine/musl。NAS 和服务器可使用 Docker Compose。
