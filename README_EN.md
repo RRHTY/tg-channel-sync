@@ -72,7 +72,7 @@ See [requirements.txt](requirements.txt) for dependencies and the [development g
 
 | Dashboard: layout 1 | Dashboard: layout 2 | Settings |
 | :---: | :---: | :---: |
-| <img width="280" alt="Telegram channel sync dashboard, layout 1" src="https://github.com/user-attachments/assets/0a326892-f753-4794-95bd-5870ca2c4f92" /> | <img width="280" alt="Telegram channel sync dashboard, layout 2" src="https://github.com/user-attachments/assets/4d7efb37-f610-446f-90c9-57230bc07738" /> | <img width="280" alt="Telegram channel sync settings" src="https://github.com/user-attachments/assets/cc4bcb13-d747-4ba3-844b-c3a829be6e54" /> |
+| <img width="1370" height="2179" alt="image" src="https://github.com/user-attachments/assets/c44a2c18-761b-47c4-b5c4-b41d65046e45" /> | <img width="280" alt="Telegram channel sync dashboard, layout 2" src="https://github.com/user-attachments/assets/4d7efb37-f610-446f-90c9-57230bc07738" /> | <img width="280" alt="Telegram channel sync settings" src="https://github.com/user-attachments/assets/cc4bcb13-d747-4ba3-844b-c3a829be6e54" /> |
 
 ## License
 
